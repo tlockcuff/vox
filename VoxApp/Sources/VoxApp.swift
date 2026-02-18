@@ -274,13 +274,41 @@ func log(_ message: String) {
 // MARK: - Paths
 
 struct Paths {
+    /// User config/data directory (always ~/.vox/)
     static let configDir: String = {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vox").path
     }()
 
-    static var ttsBin: String { "\(configDir)/bin/sherpa-onnx-offline-tts" }
-    static var modelDir: String { "\(configDir)/kokoro-en-v0_19" }
-    static var libDir: String { "\(configDir)/bin" }
+    /// Are we running from inside a .app bundle?
+    static let isAppBundle: Bool = {
+        Bundle.main.bundlePath.hasSuffix(".app")
+    }()
+
+    /// TTS binary: prefer .app bundle, fallback to ~/.vox/bin/
+    static var ttsBin: String {
+        if isAppBundle {
+            let bundlePath = Bundle.main.bundlePath + "/Contents/Frameworks/sherpa-onnx-offline-tts"
+            if FileManager.default.fileExists(atPath: bundlePath) { return bundlePath }
+        }
+        return "\(configDir)/bin/sherpa-onnx-offline-tts"
+    }
+
+    /// Model directory: prefer .app bundle, fallback to ~/.vox/
+    static var modelDir: String {
+        if isAppBundle {
+            let bundlePath = Bundle.main.bundlePath + "/Contents/Resources/kokoro-en-v0_19"
+            if FileManager.default.fileExists(atPath: bundlePath) { return bundlePath }
+        }
+        return "\(configDir)/kokoro-en-v0_19"
+    }
+
+    /// Dylib directory for DYLD_LIBRARY_PATH (only needed for non-@loader_path builds)
+    static var libDir: String {
+        if isAppBundle {
+            return Bundle.main.bundlePath + "/Contents/Frameworks"
+        }
+        return "\(configDir)/bin"
+    }
 }
 
 // MARK: - Waveform View

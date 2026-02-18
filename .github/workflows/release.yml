@@ -32,6 +32,39 @@ jobs:
             echo "SHORT_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" >> $GITHUB_OUTPUT
           fi
 
+      - name: Import signing certificate
+        env:
+          DEVELOPER_ID_CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+          DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+          echo "$DEVELOPER_ID_CERT_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$DEVELOPER_ID_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Add to search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          # Find signing identity
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+          if [[ -z "$IDENTITY" ]]; then
+            echo "❌ No Developer ID Application identity found"
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+          echo "SIGNING_IDENTITY=$IDENTITY" >> $GITHUB_ENV
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+          echo "✅ Signing identity: $IDENTITY"
+
       - name: Generate app icon
         run: bash scripts/generate-icon.sh VoxApp/Sources/Assets.xcassets/AppIcon.appiconset
 
@@ -99,13 +132,18 @@ jobs:
           iconutil -c icns "${ICONSET}" -o "${RESOURCES}/AppIcon.icns"
           rm -rf "${ICONSET}"
 
-          # Fix dylib paths
+          # Fix dylib rpaths so DYLD_LIBRARY_PATH isn't needed
           cd "${FRAMEWORKS}"
           for dylib in *.dylib; do
             install_name_tool -id "@loader_path/${dylib}" "${dylib}" 2>/dev/null || true
           done
-          for dylib in *.dylib; do
-            install_name_tool -change "@rpath/${dylib}" "@loader_path/${dylib}" sherpa-onnx-offline-tts 2>/dev/null || true
+          # Fix all cross-references between dylibs
+          for binary in sherpa-onnx-offline-tts *.dylib; do
+            for dylib in *.dylib; do
+              install_name_tool -change "@rpath/${dylib}" "@loader_path/${dylib}" "${binary}" 2>/dev/null || true
+              install_name_tool -change "/usr/local/lib/${dylib}" "@loader_path/${dylib}" "${binary}" 2>/dev/null || true
+              install_name_tool -change "${dylib}" "@loader_path/${dylib}" "${binary}" 2>/dev/null || true
+            done
           done
           cd -
 
@@ -136,16 +174,56 @@ jobs:
           </dict>
           </plist>
           PLIST
-          # Inject version (heredoc above can't use variables with quoted delimiter)
           sed -i '' "s|</dict>|    <key>CFBundleVersion</key><string>${SHORT_VERSION}</string><key>CFBundleShortVersionString</key><string>${SHORT_VERSION}</string></dict>|" "${CONTENTS}/Info.plist"
 
-          # Codesign everything
-          codesign --force --deep --sign - "${FRAMEWORKS}/"*.dylib
-          codesign --force --deep --sign - "${FRAMEWORKS}/sherpa-onnx-offline-tts"
-          codesign --force --deep --sign - "${MACOS}/Vox"
-          codesign --force --deep --sign - "${APP}"
-
           chmod +x "${MACOS}/Vox" "${FRAMEWORKS}/sherpa-onnx-offline-tts"
+
+      - name: Codesign .app bundle
+        run: |
+          APP="Vox.app"
+          FRAMEWORKS="${APP}/Contents/Frameworks"
+
+          # Sign dylibs first (inside out)
+          for dylib in "${FRAMEWORKS}"/*.dylib; do
+            codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$dylib"
+          done
+
+          # Sign TTS binary
+          codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/sherpa-onnx-offline-tts"
+
+          # Sign main executable
+          codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "${APP}/Contents/MacOS/Vox"
+
+          # Sign the whole .app bundle
+          codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
+
+          # Verify
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "✅ Codesigning verified"
+
+      - name: Notarize .app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Create a zip for notarization
+          ditto -c -k --keepParent Vox.app Vox-notarize.zip
+
+          # Submit for notarization
+          echo "📤 Submitting for notarization..."
+          xcrun notarytool submit Vox-notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 600
+
+          # Staple the ticket to the app
+          echo "📎 Stapling notarization ticket..."
+          xcrun stapler staple Vox.app
+
+          echo "✅ Notarization complete"
+          rm Vox-notarize.zip
 
       - name: Create DMG
         run: |
@@ -158,6 +236,16 @@ jobs:
 
           hdiutil create -volname "Vox" -srcfolder dmg-staging -ov -format UDZO "${DMG_NAME}"
           rm -rf dmg-staging
+
+          # Sign and notarize the DMG too
+          codesign --force --timestamp --sign "$SIGNING_IDENTITY" "${DMG_NAME}"
+          xcrun notarytool submit "${DMG_NAME}" \
+            --apple-id "${{ secrets.APPLE_ID }}" \
+            --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" \
+            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
+            --wait --timeout 600
+          xcrun stapler staple "${DMG_NAME}"
+          echo "✅ DMG signed + notarized"
 
       - name: Also create zip (for update.sh)
         run: |
@@ -175,6 +263,13 @@ jobs:
           chmod +x Vox-macOS/install.sh Vox-macOS/vox.sh Vox-macOS/Vox
           zip -r "Vox-macOS-${VERSION}.zip" Vox-macOS/
 
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -186,18 +281,10 @@ jobs:
             **Highlight → Right-Click → Speak** with natural AI voices on macOS.
 
             ### Installation
-
-            **Option 1: DMG (Recommended)**
             1. Download `Vox-${{ steps.version.outputs.VERSION }}.dmg`
             2. Open the DMG
             3. Drag **Vox** to **Applications**
-            4. Launch Vox from Applications
-            5. First launch extracts TTS engine + installs right-click Quick Action automatically
-
-            **Option 2: CLI**
-            ```bash
-            ~/.vox/update.sh
-            ```
+            4. Launch Vox — that's it! ✨
 
             ### Features
             - 🗣️ Natural AI voices (Kokoro TTS, 11 speakers)
@@ -207,6 +294,7 @@ jobs:
             - 🎚️ Speed control (0.5x - 2.0x)
             - 🧹 Smart text cleanup (strips URLs, markdown, HTML)
             - 🔄 Built-in update checker
+            - ✅ Signed & notarized — no Gatekeeper warnings
           files: |
             Vox-${{ steps.version.outputs.VERSION }}.dmg
             Vox-macOS-${{ steps.version.outputs.VERSION }}.zip
