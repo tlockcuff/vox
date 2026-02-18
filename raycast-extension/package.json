@@ -1,0 +1,101 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "speaksel",
+  "title": "SpeakSel",
+  "description": "Speak selected text with natural AI voices (Kokoro TTS)",
+  "icon": "icon.png",
+  "author": "tlockcuff",
+  "categories": ["Productivity", "System"],
+  "license": "MIT",
+  "preferences": [
+    {
+      "name": "voice",
+      "title": "Voice",
+      "description": "Speaker voice ID (0-10)",
+      "type": "dropdown",
+      "required": false,
+      "default": "5",
+      "data": [
+        { "title": "American Female", "value": "0" },
+        { "title": "AF - Bella", "value": "1" },
+        { "title": "AF - Nicole", "value": "2" },
+        { "title": "AF - Sarah", "value": "3" },
+        { "title": "AF - Sky", "value": "4" },
+        { "title": "American Male - Adam", "value": "5" },
+        { "title": "AM - Michael", "value": "6" },
+        { "title": "British Female - Emma", "value": "7" },
+        { "title": "BF - Isabella", "value": "8" },
+        { "title": "British Male - George", "value": "9" },
+        { "title": "BM - Lewis", "value": "10" }
+      ]
+    },
+    {
+      "name": "speed",
+      "title": "Speed",
+      "description": "Playback speed (0.5 - 2.0)",
+      "type": "dropdown",
+      "required": false,
+      "default": "1.0",
+      "data": [
+        { "title": "0.5x (Slow)", "value": "0.5" },
+        { "title": "0.75x", "value": "0.75" },
+        { "title": "1.0x (Normal)", "value": "1.0" },
+        { "title": "1.25x", "value": "1.25" },
+        { "title": "1.5x", "value": "1.5" },
+        { "title": "1.75x", "value": "1.75" },
+        { "title": "2.0x (Fast)", "value": "2.0" }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "speak-selection",
+      "title": "Speak Selected Text",
+      "subtitle": "SpeakSel",
+      "description": "Read the currently selected text aloud using Kokoro TTS",
+      "mode": "no-view",
+      "keywords": ["speak", "read", "tts", "voice"]
+    },
+    {
+      "name": "stop-speaking",
+      "title": "Stop Speaking",
+      "subtitle": "SpeakSel",
+      "description": "Stop current audio playback",
+      "mode": "no-view",
+      "keywords": ["stop", "silence", "quiet"]
+    },
+    {
+      "name": "toggle-playback",
+      "title": "Pause/Resume Speaking",
+      "subtitle": "SpeakSel",
+      "description": "Toggle pause/resume on current playback",
+      "mode": "no-view",
+      "keywords": ["pause", "resume", "toggle"]
+    },
+    {
+      "name": "playback-controls",
+      "title": "SpeakSel Controls",
+      "subtitle": "SpeakSel",
+      "description": "Visual playback controls with speed and voice settings",
+      "mode": "view",
+      "keywords": ["controls", "player", "settings"]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.83.0",
+    "@raycast/utils": "^1.17.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "20.8.10",
+    "@types/react": "18.3.3",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint"
+  }
+}
