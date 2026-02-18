@@ -86,7 +86,7 @@ speak_text() {
         --kokoro-voices="${MODEL_DIR}/voices.bin" \
         --kokoro-tokens="${MODEL_DIR}/tokens.txt" \
         --kokoro-data-dir="${MODEL_DIR}/espeak-ng-data" \
-        --kokoro-lexicon="${MODEL_DIR}/lexicon-us-en.txt" \
+        \
         --num-threads=2 \
         --sid="${VOICE}" \
         --kokoro-length-scale="$(awk -v s="${SPEED}" 'BEGIN{printf "%.2f", 1/s}')" \
