@@ -347,6 +347,9 @@ jobs:
             fi
           fi
 
+          # Copy DMG to /tmp so it survives git operations
+          cp "Vox-${VERSION}.dmg" /tmp/ 2>/dev/null || true
+
           # Generate appcast.xml (save to /tmp so git stash doesn't eat it)
           cat > /tmp/appcast.xml << APPCAST
           <?xml version="1.0" encoding="utf-8"?>
@@ -383,6 +386,8 @@ jobs:
           git add appcast.xml
           git diff --cached --quiet || git commit -m "Update appcast for ${{ steps.version.outputs.VERSION }}"
           git push origin main || echo "⚠️ Could not push appcast (non-fatal)"
+          # Restore DMG for release upload
+          cp /tmp/Vox-*.dmg . 2>/dev/null || true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
