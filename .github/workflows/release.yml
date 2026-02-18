@@ -110,36 +110,34 @@ jobs:
           cd -
 
           # Info.plist
-          cat > "${CONTENTS}/Info.plist" << PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>
-    <string>Vox</string>
-    <key>CFBundleDisplayName</key>
-    <string>Vox</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.tlockcuff.vox</string>
-    <key>CFBundleVersion</key>
-    <string>${SHORT_VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${SHORT_VERSION}</string>
-    <key>CFBundleExecutable</key>
-    <string>Vox</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-</dict>
-</plist>
-PLIST
+          cat > "${CONTENTS}/Info.plist" <<'          PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>Vox</string>
+              <key>CFBundleDisplayName</key>
+              <string>Vox</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.tlockcuff.vox</string>
+              <key>CFBundleExecutable</key>
+              <string>Vox</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>13.0</string>
+              <key>LSUIElement</key>
+              <true/>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          # Inject version (heredoc above can't use variables with quoted delimiter)
+          sed -i '' "s|</dict>|    <key>CFBundleVersion</key><string>${SHORT_VERSION}</string><key>CFBundleShortVersionString</key><string>${SHORT_VERSION}</string></dict>|" "${CONTENTS}/Info.plist"
 
           # Codesign everything
           codesign --force --deep --sign - "${FRAMEWORKS}/"*.dylib
