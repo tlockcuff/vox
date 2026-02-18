@@ -6,13 +6,13 @@
     <language>en</language>
     <item>
       <title>Vox 0.7.0</title>
-      <pubDate>Wed, 18 Feb 2026 21:03:12 +0000</pubDate>
+      <pubDate>Wed, 18 Feb 2026 21:09:06 +0000</pubDate>
       <sparkle:version>0.7.0</sparkle:version>
       <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/tlockcuff/vox/releases/download/v0.7.0/Vox-v0.7.0.dmg"
         sparkle:edSignature=""
-        length="58721467"
+        length="60292099"
         type="application/octet-stream" />
     </item>
   </channel>
