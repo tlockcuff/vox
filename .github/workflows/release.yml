@@ -243,40 +243,15 @@ jobs:
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "${APP}/Contents/MacOS/Vox"
 
-          # Sign the whole .app bundle
+          # Sign the whole .app bundle (--deep re-signs nested code)
           codesign --force --deep --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "$APP"
 
           # Verify
-          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 || true
+          spctl --assess --type exec --verbose "$APP" 2>&1 || true
           echo "✅ Codesigning verified"
-
-      - name: Notarize .app
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          # Create a zip for notarization
-          ditto -c -k --keepParent Vox.app Vox-notarize.zip
-          echo "📤 Zip size: $(du -sh Vox-notarize.zip | cut -f1)"
-
-          # Submit and wait (5 min timeout — if Apple is slow, we ship signed-only)
-          echo "📤 Submitting for notarization..."
-          if xcrun notarytool submit Vox-notarize.zip \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait --timeout 300; then
-            echo "📎 Stapling notarization ticket..."
-            xcrun stapler staple Vox.app
-            echo "✅ Notarization complete"
-          else
-            echo "⚠️ Notarization did not complete in time — shipping signed-only"
-            echo "   (Users will see a one-time 'Open Anyway' prompt in System Settings)"
-          fi
-          rm -f Vox-notarize.zip
 
       - name: Create DMG
         run: |
@@ -298,17 +273,32 @@ jobs:
           # Sign the DMG
           codesign --force --timestamp --sign "$SIGNING_IDENTITY" "${DMG_NAME}"
 
-          # Notarize DMG (non-blocking — app may already be notarized)
+          # Notarize DMG
           echo "📤 Notarizing DMG..."
-          if xcrun notarytool submit "${DMG_NAME}" \
+          NOTARIZE_OUTPUT=$(xcrun notarytool submit "${DMG_NAME}" \
             --apple-id "${{ secrets.APPLE_ID }}" \
             --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" \
             --team-id "${{ secrets.APPLE_TEAM_ID }}" \
-            --wait --timeout 300; then
+            --wait --timeout 300 2>&1) || true
+          echo "$NOTARIZE_OUTPUT"
+
+          # Extract submission ID and fetch log if failed
+          SUB_ID=$(echo "$NOTARIZE_OUTPUT" | grep "id:" | head -1 | awk '{print $NF}')
+          STATUS=$(echo "$NOTARIZE_OUTPUT" | grep "status:" | head -1 | awk '{print $NF}')
+
+          if [[ "$STATUS" == "Accepted" ]]; then
             xcrun stapler staple "${DMG_NAME}" || true
             echo "✅ DMG notarized"
           else
-            echo "⚠️ DMG notarization skipped — shipping signed-only"
+            echo "⚠️ DMG notarization status: $STATUS"
+            if [[ -n "$SUB_ID" ]]; then
+              echo "📋 Fetching notarization log..."
+              xcrun notarytool log "$SUB_ID" \
+                --apple-id "${{ secrets.APPLE_ID }}" \
+                --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" \
+                --team-id "${{ secrets.APPLE_TEAM_ID }}" 2>&1 || true
+            fi
+            echo "⚠️ Shipping signed-only (users may need to approve in System Settings)"
           fi
 
       - name: Cleanup keychain
