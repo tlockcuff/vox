@@ -26,10 +26,14 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+            echo "SHORT_VERSION=$(echo ${{ github.event.inputs.tag }} | sed 's/^v//')" >> $GITHUB_OUTPUT
           else
             echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "SHORT_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" >> $GITHUB_OUTPUT
           fi
-          echo "SHORT_VERSION=$(echo ${GITHUB_REF#refs/tags/v} | sed 's/^v//')" >> $GITHUB_OUTPUT
+
+      - name: Generate app icon
+        run: bash scripts/generate-icon.sh VoxApp/Sources/Assets.xcassets/AppIcon.appiconset
 
       - name: Build Vox
         run: |
@@ -58,7 +62,7 @@ jobs:
       - name: Create .app bundle
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          SHORT_VERSION="${VERSION#v}"
+          SHORT_VERSION="${{ steps.version.outputs.SHORT_VERSION }}"
 
           APP="Vox.app"
           CONTENTS="${APP}/Contents"
@@ -78,6 +82,23 @@ jobs:
           # Model in Resources
           cp -r staging/kokoro-en-v0_19 "${RESOURCES}/"
 
+          # App icon
+          ICONSET="${RESOURCES}/AppIcon.iconset"
+          mkdir -p "${ICONSET}"
+          ICON_SRC="VoxApp/Sources/Assets.xcassets/AppIcon.appiconset"
+          cp "${ICON_SRC}/icon_16.png" "${ICONSET}/icon_16x16.png"
+          cp "${ICON_SRC}/icon_32.png" "${ICONSET}/icon_16x16@2x.png"
+          cp "${ICON_SRC}/icon_32.png" "${ICONSET}/icon_32x32.png"
+          cp "${ICON_SRC}/icon_64.png" "${ICONSET}/icon_32x32@2x.png"
+          cp "${ICON_SRC}/icon_128.png" "${ICONSET}/icon_128x128.png"
+          cp "${ICON_SRC}/icon_256.png" "${ICONSET}/icon_128x128@2x.png"
+          cp "${ICON_SRC}/icon_256.png" "${ICONSET}/icon_256x256.png"
+          cp "${ICON_SRC}/icon_512.png" "${ICONSET}/icon_256x256@2x.png"
+          cp "${ICON_SRC}/icon_512.png" "${ICONSET}/icon_512x512.png"
+          cp "${ICON_SRC}/icon_1024.png" "${ICONSET}/icon_512x512@2x.png"
+          iconutil -c icns "${ICONSET}" -o "${RESOURCES}/AppIcon.icns"
+          rm -rf "${ICONSET}"
+
           # Fix dylib paths
           cd "${FRAMEWORKS}"
           for dylib in *.dylib; do
@@ -90,33 +111,35 @@ jobs:
 
           # Info.plist
           cat > "${CONTENTS}/Info.plist" << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleName</key>
-              <string>Vox</string>
-              <key>CFBundleDisplayName</key>
-              <string>Vox</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.tlockcuff.vox</string>
-              <key>CFBundleVersion</key>
-              <string>${SHORT_VERSION}</string>
-              <key>CFBundleShortVersionString</key>
-              <string>${SHORT_VERSION}</string>
-              <key>CFBundleExecutable</key>
-              <string>Vox</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>13.0</string>
-              <key>LSUIElement</key>
-              <true/>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-          </dict>
-          </plist>
-          PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Vox</string>
+    <key>CFBundleDisplayName</key>
+    <string>Vox</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.tlockcuff.vox</string>
+    <key>CFBundleVersion</key>
+    <string>${SHORT_VERSION}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${SHORT_VERSION}</string>
+    <key>CFBundleExecutable</key>
+    <string>Vox</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+PLIST
 
           # Codesign everything
           codesign --force --deep --sign - "${FRAMEWORKS}/"*.dylib
@@ -141,14 +164,12 @@ jobs:
       - name: Also create zip (for update.sh)
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          # Create a zip of the .app for programmatic updates
           mkdir -p Vox-macOS
           cp -r Vox.app Vox-macOS/
           cp scripts/vox.sh Vox-macOS/
           cp scripts/install.sh Vox-macOS/
           sed -i '' "s/v0.5.0/${VERSION}/g" Vox-macOS/install.sh
           cp README.md Vox-macOS/
-          # Also include bin/ and model for install.sh compatibility
           mkdir -p Vox-macOS/bin
           cp Vox.app/Contents/Frameworks/* Vox-macOS/bin/
           cp Vox.app/Contents/MacOS/Vox Vox-macOS/Vox
@@ -172,7 +193,7 @@ jobs:
             2. Open the DMG
             3. Drag **Vox** to **Applications**
             4. Launch Vox from Applications
-            5. First launch installs the right-click Quick Action automatically
+            5. First launch extracts TTS engine + installs right-click Quick Action automatically
 
             **Option 2: CLI**
             ```bash

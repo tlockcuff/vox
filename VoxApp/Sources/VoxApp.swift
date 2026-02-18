@@ -7,7 +7,11 @@ struct VoxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Settings { EmptyView() }
+        // No visible windows — menu bar only
+        Settings {
+            EmptyView()
+                .frame(width: 0, height: 0)
+        }
     }
 }
 
@@ -22,12 +26,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        // Run first-launch setup
+        // Close any settings windows that SwiftUI might open
+        DispatchQueue.main.async {
+            for window in NSApp.windows {
+                window.close()
+            }
+        }
+
+        // Run first-launch setup (extract bundle resources to ~/.vox/)
         FirstLaunchSetup.run()
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Fixed-width status item so icon swaps don't shift position
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "Vox")
+            let img = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Vox")
+            img?.isTemplate = true
+            button.image = img
             button.action = #selector(togglePopover)
             button.target = self
         }
@@ -39,7 +53,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         engine.startWatching()
 
-        iconTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+        iconTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.updateIcon()
         }
     }
@@ -47,21 +61,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var iconPhase = 0
     private func updateIcon() {
         guard let button = statusItem.button else { return }
+        let symbolName: String
         switch engine.state {
         case .playing:
             let icons = ["speaker.wave.1.fill", "speaker.wave.2.fill", "speaker.wave.3.fill", "speaker.wave.2.fill"]
             iconPhase = (iconPhase + 1) % icons.count
-            button.image = NSImage(systemSymbolName: icons[iconPhase], accessibilityDescription: "Speaking")
+            symbolName = icons[iconPhase]
         case .paused:
-            button.image = NSImage(systemSymbolName: "speaker.badge.exclamationmark", accessibilityDescription: "Paused")
+            symbolName = "pause.circle"
+            iconPhase = 0
         case .stopped:
-            if UpdateChecker.shared.updateAvailable {
-                button.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: "Update Available")
-            } else {
-                button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "Vox")
-            }
+            symbolName = UpdateChecker.shared.updateAvailable ? "arrow.down.circle" : "waveform"
             iconPhase = 0
         }
+        let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Vox")
+        img?.isTemplate = true
+        // Force consistent size
+        img?.size = NSSize(width: 18, height: 18)
+        button.image = img
     }
 
     @objc func togglePopover() {
@@ -84,6 +101,7 @@ struct FirstLaunchSetup {
 
         // Create config directory
         try? fm.createDirectory(atPath: configDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(atPath: "\(configDir)/bin", withIntermediateDirectories: true)
 
         // Default config files
         let voiceFile = "\(configDir)/voice"
@@ -99,11 +117,64 @@ struct FirstLaunchSetup {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.5.1"
         try? version.write(toFile: "\(configDir)/.version", atomically: true, encoding: .utf8)
 
+        // Extract bundled TTS engine + model to ~/.vox/ (avoids SIP/DYLD issues in .app bundle)
+        extractBundleResources()
+
+        // Remove old SpeakSel service if it exists
+        let oldWorkflow = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Services/Speak with SpeakSel.workflow").path
+        if fm.fileExists(atPath: oldWorkflow) {
+            try? fm.removeItem(atPath: oldWorkflow)
+        }
+
         // Install Quick Action
         installQuickAction()
 
         // Install shell helper
         installShellHelper()
+    }
+
+    static func extractBundleResources() {
+        let fm = FileManager.default
+        let configDir = Paths.configDir
+        let binDir = "\(configDir)/bin"
+
+        // Extract sherpa-onnx binary + dylibs from app bundle Frameworks
+        let frameworksDir = Bundle.main.bundlePath + "/Contents/Frameworks"
+        if fm.fileExists(atPath: frameworksDir) {
+            if let files = try? fm.contentsOfDirectory(atPath: frameworksDir) {
+                for file in files {
+                    let src = "\(frameworksDir)/\(file)"
+                    let dst = "\(binDir)/\(file)"
+                    // Always overwrite on update
+                    try? fm.removeItem(atPath: dst)
+                    try? fm.copyItem(atPath: src, toPath: dst)
+                    // Make executable
+                    try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dst)
+                }
+            }
+        }
+
+        // Extract model from app bundle Resources
+        let bundleModelDir = Bundle.main.bundlePath + "/Contents/Resources/kokoro-en-v0_19"
+        let localModelDir = "\(configDir)/kokoro-en-v0_19"
+        if fm.fileExists(atPath: bundleModelDir) && !fm.fileExists(atPath: "\(localModelDir)/model.onnx") {
+            try? fm.copyItem(atPath: bundleModelDir, toPath: localModelDir)
+        }
+
+        // Codesign extracted binaries (ad-hoc)
+        let codesignProcess = Process()
+        codesignProcess.executableURL = URL(fileURLWithPath: "/bin/bash")
+        codesignProcess.arguments = ["-c", """
+            cd "\(binDir)"
+            xattr -cr . 2>/dev/null
+            for f in *.dylib; do [ -f "$f" ] && codesign --force --sign - "$f" 2>/dev/null; done
+            [ -f sherpa-onnx-offline-tts ] && codesign --force --sign - sherpa-onnx-offline-tts 2>/dev/null
+            true
+        """]
+        codesignProcess.standardOutput = FileHandle.nullDevice
+        codesignProcess.standardError = FileHandle.nullDevice
+        try? codesignProcess.run()
+        codesignProcess.waitUntilExit()
     }
 
     static func installQuickAction() {
@@ -133,7 +204,7 @@ struct FirstLaunchSetup {
         </plist>
         """
 
-        let voxBin = Paths.configDir
+        let configDir = Paths.configDir
         let wflow = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -154,7 +225,7 @@ struct FirstLaunchSetup {
                 <key>ActionBundlePath</key><string>/System/Library/Automator/Run Shell Script.action</string>
                 <key>ActionName</key><string>Run Shell Script</string>
                 <key>ActionParameters</key><dict>
-                    <key>COMMAND_STRING</key><string>echo "$@" | "\(voxBin)/vox.sh"</string>
+                    <key>COMMAND_STRING</key><string>echo "$@" | "\(configDir)/vox.sh"</string>
                     <key>CheckedForUserDefaultShell</key><true/>
                     <key>inputMethod</key><integer>1</integer>
                     <key>shell</key><string>/bin/bash</string>
@@ -190,7 +261,6 @@ struct FirstLaunchSetup {
     }
 
     static func installShellHelper() {
-        // Write a small shell script to ~/.vox/ that delegates to the app's bundled binary
         let script = """
         #!/usr/bin/env bash
         set -euo pipefail
@@ -212,7 +282,6 @@ struct FirstLaunchSetup {
         """
         let path = "\(Paths.configDir)/vox.sh"
         try? script.write(toFile: path, atomically: true, encoding: .utf8)
-        // Make executable
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/chmod")
         process.arguments = ["+x", path]
@@ -221,7 +290,7 @@ struct FirstLaunchSetup {
     }
 }
 
-// MARK: - Paths
+// MARK: - Paths (always use ~/.vox/ — bundle resources extracted on first launch)
 
 struct Paths {
     static let configDir: String = {
@@ -229,27 +298,15 @@ struct Paths {
     }()
 
     static var ttsBin: String {
-        // Look in app bundle first, then ~/.vox/bin
-        if let bundlePath = Bundle.main.path(forAuxiliaryExecutable: "sherpa-onnx-offline-tts") {
-            return bundlePath
-        }
-        let bundleFrameworks = Bundle.main.bundlePath + "/Contents/Frameworks/sherpa-onnx-offline-tts"
-        if FileManager.default.fileExists(atPath: bundleFrameworks) {
-            return bundleFrameworks
-        }
-        return "\(configDir)/bin/sherpa-onnx-offline-tts"
+        "\(configDir)/bin/sherpa-onnx-offline-tts"
     }
 
     static var modelDir: String {
-        let bundleResource = Bundle.main.bundlePath + "/Contents/Resources/kokoro-en-v0_19"
-        if FileManager.default.fileExists(atPath: bundleResource) {
-            return bundleResource
-        }
-        return "\(configDir)/kokoro-en-v0_19"
+        "\(configDir)/kokoro-en-v0_19"
     }
 
-    static var frameworksDir: String {
-        Bundle.main.bundlePath + "/Contents/Frameworks"
+    static var libDir: String {
+        "\(configDir)/bin"
     }
 }
 
@@ -310,7 +367,7 @@ struct ControlsView: View {
 
             HStack {
                 Image(systemName: engine.state == .playing ? "speaker.wave.3.fill" :
-                        engine.state == .paused ? "pause.circle.fill" : "speaker.slash")
+                        engine.state == .paused ? "pause.circle.fill" : "waveform")
                     .foregroundColor(engine.state == .playing ? .green : engine.state == .paused ? .yellow : .secondary)
                     .font(.title3)
                 Text(engine.state == .playing ? "Speaking" : engine.state == .paused ? "Paused" : "Idle")
@@ -362,6 +419,14 @@ struct ControlsView: View {
                     Text("\(engine.wordCount) words").font(.caption2).foregroundColor(.secondary)
                     Text("•").foregroundColor(.secondary)
                     Text("Chunk \(engine.currentIndex + 1)/\(engine.totalSentences)").font(.caption2).foregroundColor(.secondary)
+                    Spacer()
+                }
+            }
+
+            if let errorMsg = engine.lastError {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle").foregroundColor(.red).font(.caption)
+                    Text(errorMsg).font(.caption2).foregroundColor(.red).lineLimit(2)
                     Spacer()
                 }
             }
@@ -493,6 +558,7 @@ class TTSEngine: ObservableObject {
     @Published var wordCount: Int = 0
     @Published var currentIndex: Int = 0
     @Published var totalSentences: Int = 0
+    @Published var lastError: String?
 
     private var generateQueue: [String] = []
     private var audioFiles: [String] = []
@@ -565,8 +631,19 @@ class TTSEngine: ObservableObject {
 
     func speak(text: String) {
         stop()
+        lastError = nil
         let cleaned = TextCleaner.clean(text)
         guard !cleaned.isEmpty else { return }
+
+        // Verify TTS binary exists
+        guard FileManager.default.fileExists(atPath: Paths.ttsBin) else {
+            lastError = "TTS engine not found at \(Paths.ttsBin)"
+            return
+        }
+        guard FileManager.default.fileExists(atPath: "\(Paths.modelDir)/model.onnx") else {
+            lastError = "Kokoro model not found at \(Paths.modelDir)"
+            return
+        }
 
         totalWords = wordCountFor(cleaned)
         spokenWords = 0
@@ -636,17 +713,37 @@ class TTSEngine: ObservableObject {
                 "--output-filename=\(outFile)",
                 sentence
             ]
-            process.environment = [
-                "DYLD_LIBRARY_PATH": Paths.frameworksDir,
-                "PATH": "/usr/bin:/bin"
-            ]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
+            // Set DYLD_LIBRARY_PATH so sherpa-onnx finds its dylibs
+            var env = ProcessInfo.processInfo.environment
+            env["DYLD_LIBRARY_PATH"] = Paths.libDir
+            process.environment = env
 
-            do { try process.run(); process.waitUntilExit() } catch { return }
+            // Capture stderr for debugging
+            let errPipe = Pipe()
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = errPipe
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                DispatchQueue.main.async { self.lastError = "Failed to launch TTS: \(error.localizedDescription)" }
+                return
+            }
+
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let errStr = String(data: errData, encoding: .utf8) ?? ""
+
+            if process.terminationStatus != 0 {
+                DispatchQueue.main.async {
+                    self.lastError = "TTS failed (exit \(process.terminationStatus)): \(errStr.prefix(200))"
+                }
+                return
+            }
 
             DispatchQueue.main.async {
                 guard self.state != .stopped else { return }
+                self.lastError = nil
                 self.audioFiles.append(outFile)
                 if index == self.currentIndex { self.playNext() }
                 if !self.generateQueue.isEmpty { self.generateAndPlay() }

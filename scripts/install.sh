@@ -6,8 +6,8 @@ VOX_DIR="${HOME}/.vox"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERSION_FILE="${VOX_DIR}/.version"
 
-echo "🗣️  Vox Installer"
-echo "====================="
+echo "🎙️  Vox Installer"
+echo "================="
 echo ""
 
 # Detect architecture
@@ -21,6 +21,20 @@ else
     exit 1
 fi
 echo "📦 Detected: macOS ${PLATFORM}"
+
+# --- Clean up old SpeakSel installation ---
+if [[ -d "${HOME}/.speaksel" ]]; then
+    echo "🧹 Removing old SpeakSel installation..."
+    pkill -f "SpeakSel" 2>/dev/null || true
+    launchctl unload "${HOME}/Library/LaunchAgents/com.speaksel.app.plist" 2>/dev/null || true
+    rm -f "${HOME}/Library/LaunchAgents/com.speaksel.app.plist"
+    rm -rf "${HOME}/Library/Services/Speak with SpeakSel.workflow"
+    # Migrate config but not binaries
+    [[ -f "${HOME}/.speaksel/voice" ]] && mkdir -p "${VOX_DIR}" && cp "${HOME}/.speaksel/voice" "${VOX_DIR}/voice" 2>/dev/null || true
+    [[ -f "${HOME}/.speaksel/speed" ]] && mkdir -p "${VOX_DIR}" && cp "${HOME}/.speaksel/speed" "${VOX_DIR}/speed" 2>/dev/null || true
+    rm -rf "${HOME}/.speaksel"
+    echo "✅ Old SpeakSel removed"
+fi
 
 # Stop existing app if running
 echo "🔄 Stopping existing Vox..."
@@ -36,7 +50,6 @@ if [[ -f "${SCRIPT_DIR}/bin/sherpa-onnx-offline-tts" ]]; then
     echo "📋 Installing from release package..."
     cp -f "${SCRIPT_DIR}/bin/"* "${VOX_DIR}/bin/"
     if [[ -d "${SCRIPT_DIR}/kokoro-en-v0_19" ]]; then
-        # Only copy model if not already installed (it's big)
         if [[ ! -f "${VOX_DIR}/kokoro-en-v0_19/model.onnx" ]]; then
             echo "📦 Installing Kokoro model (~350MB)..."
             cp -r "${SCRIPT_DIR}/kokoro-en-v0_19" "${VOX_DIR}/"
@@ -73,19 +86,14 @@ elif [[ -f "${SCRIPT_DIR}/../VoxApp/.build/release/Vox" ]]; then
     cp -f "${SCRIPT_DIR}/../VoxApp/.build/release/Vox" "${VOX_DIR}/bin/Vox"
 fi
 
-# --- Codesign all binaries (required by macOS Gatekeeper) ---
-echo "🔐 Codesigning binaries (required by macOS Gatekeeper)..."
+# --- Codesign all binaries ---
+echo "🔐 Codesigning binaries..."
 xattr -cr "${VOX_DIR}/bin/"
 for f in "${VOX_DIR}/bin/"*.dylib; do
-    echo "  signing $(basename "$f")..."
-    codesign --force --deep --sign - "$f"
+    [ -f "$f" ] && codesign --force --deep --sign - "$f" 2>/dev/null
 done
-echo "  signing sherpa-onnx-offline-tts..."
-codesign --force --deep --sign - "${VOX_DIR}/bin/sherpa-onnx-offline-tts"
-if [[ -f "${VOX_DIR}/bin/Vox" ]]; then
-    echo "  signing Vox..."
-    codesign --force --deep --sign - "${VOX_DIR}/bin/Vox"
-fi
+[ -f "${VOX_DIR}/bin/sherpa-onnx-offline-tts" ] && codesign --force --deep --sign - "${VOX_DIR}/bin/sherpa-onnx-offline-tts"
+[ -f "${VOX_DIR}/bin/Vox" ] && codesign --force --deep --sign - "${VOX_DIR}/bin/Vox"
 chmod +x "${VOX_DIR}/bin/"*
 echo "✅ Codesigning complete"
 
@@ -99,148 +107,6 @@ chmod +x "${VOX_DIR}/vox.sh"
 [[ -f "${VOX_DIR}/voice" ]] || echo "5" > "${VOX_DIR}/voice"
 [[ -f "${VOX_DIR}/speed" ]] || echo "1.0" > "${VOX_DIR}/speed"
 touch "${VOX_DIR}/.request"
-
-# --- macOS Quick Action ---
-echo "🔧 Installing Quick Action..."
-SERVICES_DIR="${HOME}/Library/Services"
-mkdir -p "${SERVICES_DIR}"
-WORKFLOW_DIR="${SERVICES_DIR}/Speak with Vox.workflow"
-mkdir -p "${WORKFLOW_DIR}/Contents"
-
-cat > "${WORKFLOW_DIR}/Contents/Info.plist" << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>NSServices</key>
-	<array>
-		<dict>
-			<key>NSMenuItem</key>
-			<dict>
-				<key>default</key>
-				<string>Speak with Vox</string>
-			</dict>
-			<key>NSMessage</key>
-			<string>runWorkflowAsService</string>
-			<key>NSSendTypes</key>
-			<array>
-				<string>NSStringPboardType</string>
-			</array>
-		</dict>
-	</array>
-</dict>
-</plist>
-PLIST
-
-cat > "${WORKFLOW_DIR}/Contents/document.wflow" << 'WFLOW'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>AMApplicationBuild</key>
-	<string>523</string>
-	<key>AMApplicationVersion</key>
-	<string>2.10</string>
-	<key>AMDocumentVersion</key>
-	<string>2</string>
-	<key>actions</key>
-	<array>
-		<dict>
-			<key>action</key>
-			<dict>
-				<key>AMAccepts</key>
-				<dict>
-					<key>Container</key>
-					<string>List</string>
-					<key>Optional</key>
-					<true/>
-					<key>Types</key>
-					<array>
-						<string>com.apple.cocoa.string</string>
-					</array>
-				</dict>
-				<key>AMActionVersion</key>
-				<string>2.0.3</string>
-				<key>AMApplication</key>
-				<array>
-					<string>Automator</string>
-				</array>
-				<key>AMCategory</key>
-				<string>AMCategoryUtilities</string>
-				<key>AMIconName</key>
-				<string>Run Shell Script</string>
-				<key>AMName</key>
-				<string>Run Shell Script</string>
-				<key>AMProvides</key>
-				<dict>
-					<key>Container</key>
-					<string>List</string>
-					<key>Types</key>
-					<array>
-						<string>com.apple.cocoa.string</string>
-					</array>
-				</dict>
-				<key>AMRequiredResources</key>
-				<array/>
-				<key>ActionBundlePath</key>
-				<string>/System/Library/Automator/Run Shell Script.action</string>
-				<key>ActionName</key>
-				<string>Run Shell Script</string>
-				<key>ActionParameters</key>
-				<dict>
-					<key>COMMAND_STRING</key>
-					<string>export DYLD_LIBRARY_PATH="${HOME}/.vox/bin:${DYLD_LIBRARY_PATH:-}"
-echo "$@" | "${HOME}/.vox/vox.sh"</string>
-					<key>CheckedForUserDefaultShell</key>
-					<true/>
-					<key>inputMethod</key>
-					<integer>1</integer>
-					<key>shell</key>
-					<string>/bin/bash</string>
-					<key>source</key>
-					<string></string>
-				</dict>
-				<key>BundleIdentifier</key>
-				<string>com.apple.RunShellScript</string>
-				<key>CFBundleVersion</key>
-				<string>2.0.3</string>
-				<key>CanShowSelectedItemsWhenRun</key>
-				<false/>
-				<key>CanShowWhenRun</key>
-				<true/>
-				<key>Category</key>
-				<array>
-					<string>AMCategoryUtilities</string>
-				</array>
-				<key>Class Name</key>
-				<string>RunShellScriptAction</string>
-				<key>InputUUID</key>
-				<string>A1A1A1A1-B2B2-C3C3-D4D4-E5E5E5E5E5E5</string>
-				<key>OutputUUID</key>
-				<string>F6F6F6F6-A7A7-B8B8-C9C9-D0D0D0D0D0D0</string>
-				<key>UUID</key>
-				<string>12345678-1234-1234-1234-123456789ABC</string>
-				<key>UnlocalizedApplications</key>
-				<array>
-					<string>Automator</string>
-				</array>
-				<key>arguments</key>
-				<dict/>
-				<key>isViewVisible</key>
-				<integer>1</integer>
-			</dict>
-		</dict>
-	</array>
-	<key>connectors</key>
-	<dict/>
-	<key>workflowMetaData</key>
-	<dict>
-		<key>workflowTypeIdentifier</key>
-		<string>com.apple.Automator.servicesMenu</string>
-	</dict>
-</dict>
-</plist>
-WFLOW
 
 # --- Launch Agent (auto-start on login) ---
 if [[ -f "${VOX_DIR}/bin/Vox" ]]; then
@@ -270,9 +136,7 @@ if [[ -f "${VOX_DIR}/bin/Vox" ]]; then
 </plist>
 LAUNCHPLIST
 
-    # Launch the app
     launchctl load "${LAUNCH_AGENT_DIR}/com.vox.app.plist" 2>/dev/null || true
-    # Also start directly in case launchctl doesn't trigger immediately
     DYLD_LIBRARY_PATH="${VOX_DIR}/bin" nohup "${VOX_DIR}/bin/Vox" &>/dev/null &
     echo "✅ Menu bar app installed & launched"
 fi
@@ -283,7 +147,6 @@ cat > "${VOX_DIR}/update.sh" << 'UPDATE'
 set -euo pipefail
 echo "🔄 Updating Vox..."
 
-# Need gh CLI
 if ! command -v gh &>/dev/null; then
     echo "📥 Installing GitHub CLI..."
     brew install gh 2>/dev/null || { echo "❌ Need 'gh' CLI. Install with: brew install gh"; exit 1; }
@@ -338,15 +201,7 @@ echo "📍 Action:   ~/Library/Services/Speak with Vox.workflow"
 echo ""
 echo "🎯 Usage:"
 echo "   • Highlight text → Right-click → Services → Speak with Vox"
-echo "   • Click the 🔊 menu bar icon for playback controls"
+echo "   • Click the 🎙️ menu bar icon for playback controls"
 echo ""
 echo "🔄 Update:     ~/.vox/update.sh"
 echo "🗑️  Uninstall:  ~/.vox/uninstall.sh"
-echo ""
-echo "⌨️  Tip: Set a keyboard shortcut in System Settings → Keyboard → Keyboard Shortcuts → Services"
-echo ""
-
-# Quick test
-echo "🧪 Running quick test..."
-export DYLD_LIBRARY_PATH="${VOX_DIR}/bin:${DYLD_LIBRARY_PATH:-}"
-echo 'Vox is ready to go!' | "${VOX_DIR}/vox.sh" && echo "✅ Test passed!" || echo "⚠️  Test failed"
