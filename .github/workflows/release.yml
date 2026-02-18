@@ -49,6 +49,10 @@ jobs:
           mv kokoro-en-v0_19 build/
           rm kokoro.tar.bz2
 
+      - name: Download install script
+        run: |
+          cp scripts/speaksel.sh build/
+
       - name: Fix dylib paths
         run: |
           cd build/bin
