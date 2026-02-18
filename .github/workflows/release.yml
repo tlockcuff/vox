@@ -347,8 +347,8 @@ jobs:
             fi
           fi
 
-          # Generate appcast.xml
-          cat > appcast.xml << APPCAST
+          # Generate appcast.xml (save to /tmp so git stash doesn't eat it)
+          cat > /tmp/appcast.xml << APPCAST
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
             <channel>
@@ -370,7 +370,7 @@ jobs:
           </rss>
           APPCAST
           echo "✅ Appcast generated"
-          cat appcast.xml
+          cat /tmp/appcast.xml
 
       - name: Commit appcast
         run: |
@@ -379,7 +379,7 @@ jobs:
           git stash --include-untracked || true
           git fetch origin main
           git checkout -f main
-          cp appcast.xml . 2>/dev/null || true
+          cp /tmp/appcast.xml ./appcast.xml
           git add appcast.xml
           git diff --cached --quiet || git commit -m "Update appcast for ${{ steps.version.outputs.VERSION }}"
           git push origin main || echo "⚠️ Could not push appcast (non-fatal)"
