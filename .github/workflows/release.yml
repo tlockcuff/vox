@@ -211,11 +211,39 @@ jobs:
           FRAMEWORKS="${APP}/Contents/Frameworks"
           ENTITLEMENTS="scripts/entitlements.plist"
 
-          # Do NOT re-sign Sparkle.framework — it comes pre-signed from SPM
-          # Re-signing with our entitlements breaks its original signature
+          # Sign Sparkle.framework (inside out — SPM binary needs Developer ID re-signing)
           if [[ -d "${FRAMEWORKS}/Sparkle.framework" ]]; then
-            echo "✅ Sparkle.framework preserved (pre-signed)"
-            codesign --verify --deep --strict "${FRAMEWORKS}/Sparkle.framework" 2>&1 || echo "⚠️ Sparkle sig check"
+            SPARKLE_FW="${FRAMEWORKS}/Sparkle.framework"
+            SPARKLE_VER="${SPARKLE_FW}/Versions/B"
+
+            # XPC services — sign inner binaries first, then the bundle
+            for xpc in "${SPARKLE_VER}/XPCServices/"*.xpc; do
+              [[ -d "$xpc" ]] || continue
+              codesign --force --options runtime --timestamp \
+                --sign "$SIGNING_IDENTITY" "${xpc}/Contents/MacOS/"* 2>/dev/null || true
+              codesign --force --options runtime --timestamp \
+                --sign "$SIGNING_IDENTITY" "$xpc"
+            done
+
+            # Updater.app
+            if [[ -d "${SPARKLE_VER}/Updater.app" ]]; then
+              codesign --force --options runtime --timestamp \
+                --sign "$SIGNING_IDENTITY" "${SPARKLE_VER}/Updater.app/Contents/MacOS/Updater"
+              codesign --force --options runtime --timestamp \
+                --sign "$SIGNING_IDENTITY" "${SPARKLE_VER}/Updater.app"
+            fi
+
+            # Autoupdate binary
+            [[ -f "${SPARKLE_VER}/Autoupdate" ]] && \
+              codesign --force --options runtime --timestamp \
+                --sign "$SIGNING_IDENTITY" "${SPARKLE_VER}/Autoupdate"
+
+            # Main Sparkle dylib
+            codesign --force --options runtime --timestamp \
+              --sign "$SIGNING_IDENTITY" "${SPARKLE_FW}"
+
+            codesign --verify --deep --strict "${SPARKLE_FW}" 2>&1
+            echo "✅ Sparkle.framework signed with Developer ID"
           fi
 
           # Sign dylibs first (inside out) — with entitlements for ONNX Runtime JIT
@@ -235,8 +263,8 @@ jobs:
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "${APP}/Contents/MacOS/Vox"
 
-          # Sign the main binary only (NOT --deep, which would break Sparkle's pre-signed framework)
-          codesign --force --options runtime --timestamp \
+          # Sign the whole .app bundle
+          codesign --force --deep --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "$APP"
 
