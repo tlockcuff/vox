@@ -53,7 +53,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .paused:
             button.image = NSImage(systemSymbolName: "speaker.badge.exclamationmark", accessibilityDescription: "Paused")
         case .stopped:
-            button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "SpeakSel")
+            if UpdateChecker.shared.updateAvailable {
+                button.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: "Update Available")
+            } else {
+                button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "SpeakSel")
+            }
             iconPhase = 0
         }
     }
@@ -248,8 +252,16 @@ struct ControlsView: View {
                 }
             }
 
-            // Quit
+            Divider()
+
+            // Update section
+            UpdateBannerView()
+
+            // Footer
             HStack {
+                Text("v\(UpdateChecker.shared.currentVersion)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
                 Spacer()
                 Button("Quit SpeakSel") {
                     NSApp.terminate(nil)
@@ -260,6 +272,82 @@ struct ControlsView: View {
         }
         .padding()
         .frame(width: 300)
+    }
+}
+
+// MARK: - Update Banner
+
+struct UpdateBannerView: View {
+    @ObservedObject var checker = UpdateChecker.shared
+
+    var body: some View {
+        Group {
+            if checker.isUpdating {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Updating...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else if checker.updateAvailable, let latest = checker.latestVersion {
+                HStack {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .foregroundColor(.blue)
+                        .font(.caption)
+                    Text("Update available: v\(latest)")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                    Spacer()
+                    Button("Update") {
+                        checker.runUpdate()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.blue.opacity(0.1)))
+            } else if checker.isChecking {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                    Text("Checking for updates...")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else if let error = checker.updateError {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                        .font(.caption)
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Retry") {
+                        checker.checkForUpdates()
+                    }
+                    .font(.caption2)
+                }
+            } else {
+                HStack {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                    Text("Up to date")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Check") {
+                        checker.checkForUpdates()
+                    }
+                    .font(.caption2)
+                }
+            }
+        }
     }
 }
 
@@ -661,6 +749,177 @@ class TTSEngine: ObservableObject {
     private func cleanup() {
         for i in 0..<max(totalSentences, 50) {
             try? FileManager.default.removeItem(atPath: "\(speakselDir)/.chunk_\(i).wav")
+        }
+    }
+}
+
+// MARK: - Update Checker
+
+class UpdateChecker: ObservableObject {
+    static let shared = UpdateChecker()
+
+    @Published var updateAvailable = false
+    @Published var latestVersion: String?
+    @Published var isChecking = false
+    @Published var isUpdating = false
+    @Published var updateError: String?
+
+    let currentVersion: String
+    private let speakselDir: String
+    private let repo = "tlockcuff/speaksel"
+
+    init() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        speakselDir = "\(home)/.speaksel"
+        let versionFile = "\(speakselDir)/.version"
+        if let v = try? String(contentsOfFile: versionFile, encoding: .utf8) {
+            currentVersion = v.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "v", with: "")
+        } else {
+            currentVersion = "0.0.0"
+        }
+
+        // Check on launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            self.checkForUpdates()
+        }
+
+        // Check every 6 hours
+        Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            self?.checkForUpdates()
+        }
+    }
+
+    func checkForUpdates() {
+        guard !isChecking, !isUpdating else { return }
+        isChecking = true
+        updateError = nil
+
+        // Use GitHub API to get latest release
+        let urlStr = "https://api.github.com/repos/\(repo)/releases/latest"
+        guard let url = URL(string: urlStr) else {
+            isChecking = false
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        // Try to use gh token if available
+        if let token = getGHToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isChecking = false
+
+                if let error = error {
+                    self.updateError = "Network error"
+                    return
+                }
+
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let tagName = json["tag_name"] as? String else {
+                    self.updateError = "Could not check"
+                    return
+                }
+
+                let latest = tagName.replacingOccurrences(of: "v", with: "")
+                self.latestVersion = latest
+                self.updateAvailable = self.isNewer(latest, than: self.currentVersion)
+            }
+        }.resume()
+    }
+
+    private func getGHToken() -> String? {
+        // Check gh CLI config
+        let configPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/gh/hosts.yml").path
+        if let config = try? String(contentsOfFile: configPath, encoding: .utf8) {
+            // Simple parse for oauth_token
+            for line in config.components(separatedBy: "\n") {
+                if line.contains("oauth_token:") {
+                    return line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+
+        // Check env
+        if let token = ProcessInfo.processInfo.environment["GH_TOKEN"] {
+            return token
+        }
+        if let token = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] {
+            return token
+        }
+
+        return nil
+    }
+
+    private func isNewer(_ a: String, than b: String) -> Bool {
+        let aParts = a.split(separator: ".").compactMap { Int($0) }
+        let bParts = b.split(separator: ".").compactMap { Int($0) }
+        for i in 0..<max(aParts.count, bParts.count) {
+            let av = i < aParts.count ? aParts[i] : 0
+            let bv = i < bParts.count ? bParts[i] : 0
+            if av > bv { return true }
+            if av < bv { return false }
+        }
+        return false
+    }
+
+    func runUpdate() {
+        isUpdating = true
+        updateError = nil
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+
+            let updateScript = "\(self.speakselDir)/update.sh"
+            guard FileManager.default.fileExists(atPath: updateScript) else {
+                DispatchQueue.main.async {
+                    self.isUpdating = false
+                    self.updateError = "update.sh not found"
+                }
+                return
+            }
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [updateScript]
+            process.environment = ProcessInfo.processInfo.environment
+
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                DispatchQueue.main.async {
+                    self.isUpdating = false
+                    self.updateError = "Update failed"
+                }
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.isUpdating = false
+                if process.terminationStatus == 0 {
+                    self.updateAvailable = false
+                    self.updateError = nil
+                    // The update script restarts the app, but just in case:
+                    // Re-check version
+                    let versionFile = "\(self.speakselDir)/.version"
+                    if let v = try? String(contentsOfFile: versionFile, encoding: .utf8) {
+                        // App will be restarted by the installer
+                    }
+                } else {
+                    self.updateError = "Update failed (exit \(process.terminationStatus))"
+                }
+            }
         }
     }
 }
