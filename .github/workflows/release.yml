@@ -9,14 +9,14 @@ on:
       tag:
         description: 'Release tag (e.g. v1.0.0)'
         required: true
-        default: 'v0.2.0'
+        default: 'v1.0.0'
 
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,12 +29,12 @@ jobs:
           else
             echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
+          echo "SHORT_VERSION=$(echo ${GITHUB_REF#refs/tags/v} | sed 's/^v//')" >> $GITHUB_OUTPUT
 
-      - name: Build SpeakSel menu bar app
+      - name: Build SpeakSel
         run: |
           cd SpeakSelApp
           swift build -c release
-          cp .build/release/SpeakSel ../SpeakSel-binary
           cd ..
 
       - name: Download sherpa-onnx
@@ -43,44 +43,117 @@ jobs:
           curl -sL "https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}-osx-universal2-shared.tar.bz2" -o sherpa.tar.bz2
           tar xf sherpa.tar.bz2
           SHERPA_DIR=$(ls -d sherpa-onnx-*)
-          mkdir -p build/bin
-          cp "${SHERPA_DIR}/bin/sherpa-onnx-offline-tts" build/bin/
-          cp ${SHERPA_DIR}/lib/*.dylib build/bin/ 2>/dev/null || true
-          chmod +x build/bin/sherpa-onnx-offline-tts
+          mkdir -p staging/bin staging/lib
+          cp "${SHERPA_DIR}/bin/sherpa-onnx-offline-tts" staging/bin/
+          cp ${SHERPA_DIR}/lib/*.dylib staging/lib/
           rm -rf sherpa.tar.bz2 "${SHERPA_DIR}"
 
       - name: Download Kokoro model
         run: |
           curl -sL "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2" -o kokoro.tar.bz2
           tar xf kokoro.tar.bz2
-          mv kokoro-en-v0_19 build/
+          mv kokoro-en-v0_19 staging/
           rm kokoro.tar.bz2
 
-      - name: Fix dylib paths
+      - name: Create .app bundle
         run: |
-          cd build/bin
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          SHORT_VERSION="${VERSION#v}"
+
+          APP="SpeakSel.app"
+          CONTENTS="${APP}/Contents"
+          MACOS="${CONTENTS}/MacOS"
+          FRAMEWORKS="${CONTENTS}/Frameworks"
+          RESOURCES="${CONTENTS}/Resources"
+
+          mkdir -p "${MACOS}" "${FRAMEWORKS}" "${RESOURCES}"
+
+          # Main executable
+          cp SpeakSelApp/.build/release/SpeakSel "${MACOS}/SpeakSel"
+
+          # TTS engine + dylibs in Frameworks
+          cp staging/bin/sherpa-onnx-offline-tts "${FRAMEWORKS}/"
+          cp staging/lib/*.dylib "${FRAMEWORKS}/"
+
+          # Model in Resources
+          cp -r staging/kokoro-en-v0_19 "${RESOURCES}/"
+
+          # Fix dylib paths
+          cd "${FRAMEWORKS}"
           for dylib in *.dylib; do
             install_name_tool -id "@loader_path/${dylib}" "${dylib}" 2>/dev/null || true
           done
           for dylib in *.dylib; do
-            install_name_tool -change "@rpath/${dylib}" "@executable_path/${dylib}" sherpa-onnx-offline-tts 2>/dev/null || true
+            install_name_tool -change "@rpath/${dylib}" "@loader_path/${dylib}" sherpa-onnx-offline-tts 2>/dev/null || true
           done
+          cd -
 
-      - name: Stamp version
-        run: |
-          sed -i '' "s/v0.5.0/${{ steps.version.outputs.VERSION }}/g" scripts/install.sh
+          # Info.plist
+          cat > "${CONTENTS}/Info.plist" << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>SpeakSel</string>
+              <key>CFBundleDisplayName</key>
+              <string>SpeakSel</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.tlockcuff.speaksel</string>
+              <key>CFBundleVersion</key>
+              <string>${SHORT_VERSION}</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${SHORT_VERSION}</string>
+              <key>CFBundleExecutable</key>
+              <string>SpeakSel</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>13.0</string>
+              <key>LSUIElement</key>
+              <true/>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
 
-      - name: Package release
+          # Codesign everything
+          codesign --force --deep --sign - "${FRAMEWORKS}/"*.dylib
+          codesign --force --deep --sign - "${FRAMEWORKS}/sherpa-onnx-offline-tts"
+          codesign --force --deep --sign - "${MACOS}/SpeakSel"
+          codesign --force --deep --sign - "${APP}"
+
+          chmod +x "${MACOS}/SpeakSel" "${FRAMEWORKS}/sherpa-onnx-offline-tts"
+
+      - name: Create DMG
         run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          DMG_NAME="SpeakSel-${VERSION}.dmg"
+
+          mkdir -p dmg-staging
+          cp -r SpeakSel.app dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+
+          hdiutil create -volname "SpeakSel" -srcfolder dmg-staging -ov -format UDZO "${DMG_NAME}"
+          rm -rf dmg-staging
+
+      - name: Also create zip (for update.sh)
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Create a zip of the .app for programmatic updates
           mkdir -p SpeakSel-macOS
-          cp -r build/bin SpeakSel-macOS/
-          cp -r build/kokoro-en-v0_19 SpeakSel-macOS/
+          cp -r SpeakSel.app SpeakSel-macOS/
           cp scripts/speaksel.sh SpeakSel-macOS/
           cp scripts/install.sh SpeakSel-macOS/
-          cp SpeakSel-binary SpeakSel-macOS/SpeakSel
+          sed -i '' "s/v0.5.0/${VERSION}/g" SpeakSel-macOS/install.sh
           cp README.md SpeakSel-macOS/
+          # Also include bin/ and model for install.sh compatibility
+          mkdir -p SpeakSel-macOS/bin
+          cp SpeakSel.app/Contents/Frameworks/* SpeakSel-macOS/bin/
+          cp SpeakSel.app/Contents/MacOS/SpeakSel SpeakSel-macOS/SpeakSel
           chmod +x SpeakSel-macOS/install.sh SpeakSel-macOS/speaksel.sh SpeakSel-macOS/SpeakSel
-          zip -r "SpeakSel-macOS-${{ steps.version.outputs.VERSION }}.zip" SpeakSel-macOS/
+          zip -r "SpeakSel-macOS-${VERSION}.zip" SpeakSel-macOS/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -92,18 +165,30 @@ jobs:
 
             **Highlight → Right-Click → Speak** with natural AI voices on macOS.
 
-            ### What's new
-            - 🖥️ **Menu bar app** — visual playback controls (play/pause/stop)
-            - ⚡ **Streaming playback** — audio starts playing sentence-by-sentence instead of waiting for full generation
-            - 🎚️ **Speed & voice controls** — adjust from the menu bar
-            - 🔧 Raycast extension for keyboard shortcut integration
-
             ### Installation
-            1. Download `SpeakSel-macOS-${{ steps.version.outputs.VERSION }}.zip`
-            2. Unzip and run `./install.sh`
-            3. Launch SpeakSel from the install directory (adds to menu bar)
-            4. Highlight text anywhere → Right-click → Services → **Speak with SpeakSel**
+
+            **Option 1: DMG (Recommended)**
+            1. Download `SpeakSel-${{ steps.version.outputs.VERSION }}.dmg`
+            2. Open the DMG
+            3. Drag **SpeakSel** to **Applications**
+            4. Launch SpeakSel from Applications
+            5. First launch installs the right-click Quick Action automatically
+
+            **Option 2: CLI**
+            ```bash
+            ~/.speaksel/update.sh
+            ```
+
+            ### Features
+            - 🗣️ Natural AI voices (Kokoro TTS, 11 speakers)
+            - 🎵 Animated waveform visualizer
+            - ⏱️ ETA countdown
+            - ⏯️ Play/pause/stop controls in menu bar
+            - 🎚️ Speed control (0.5x - 2.0x)
+            - 🧹 Smart text cleanup (strips URLs, markdown, HTML)
+            - 🔄 Built-in update checker
           files: |
+            SpeakSel-${{ steps.version.outputs.VERSION }}.dmg
             SpeakSel-macOS-${{ steps.version.outputs.VERSION }}.zip
           draft: false
           prerelease: false
