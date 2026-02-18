@@ -89,7 +89,7 @@ speak_text() {
         --kokoro-lexicon="${MODEL_DIR}/lexicon-us-en.txt" \
         --num-threads=2 \
         --sid="${VOICE}" \
-        --speed="${SPEED}" \
+        --kokoro-length-scale="$(awk "BEGIN{printf \"%.2f\", 1/${SPEED}}")" \
         --output-filename="${WAV_FILE}" \
         "${text}" >/dev/null 2>&1
 
