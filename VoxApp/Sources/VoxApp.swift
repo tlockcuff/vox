@@ -2,45 +2,35 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
+// Pure AppDelegate entry — no SwiftUI App lifecycle, no Settings window
 @main
-struct VoxApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    var body: some Scene {
-        // No visible windows — menu bar only
-        Settings {
-            EmptyView()
-                .frame(width: 0, height: 0)
-        }
-    }
-}
-
-// MARK: - App Delegate
-
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var engine = TTSEngine.shared
-    private var iconTimer: Timer?
+
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        // Close any settings windows that SwiftUI might open
-        DispatchQueue.main.async {
-            for window in NSApp.windows {
-                window.close()
-            }
-        }
+        // Close any windows (there shouldn't be any now)
+        for window in NSApp.windows { window.close() }
 
-        // Run first-launch setup (extract bundle resources to ~/.vox/)
+        // First-launch setup
         FirstLaunchSetup.run()
 
-        // Fixed-width status item so icon swaps don't shift position
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Static menu bar icon — never changes
+        statusItem = NSStatusBar.system.statusItem(withLength: 22)
         if let button = statusItem.button {
             let img = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Vox")
             img?.isTemplate = true
+            img?.size = NSSize(width: 16, height: 16)
             button.image = img
             button.action = #selector(togglePopover)
             button.target = self
@@ -52,33 +42,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView: ControlsView())
 
         engine.startWatching()
-
-        iconTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.updateIcon()
-        }
-    }
-
-    private var iconPhase = 0
-    private func updateIcon() {
-        guard let button = statusItem.button else { return }
-        let symbolName: String
-        switch engine.state {
-        case .playing:
-            let icons = ["speaker.wave.1.fill", "speaker.wave.2.fill", "speaker.wave.3.fill", "speaker.wave.2.fill"]
-            iconPhase = (iconPhase + 1) % icons.count
-            symbolName = icons[iconPhase]
-        case .paused:
-            symbolName = "pause.circle"
-            iconPhase = 0
-        case .stopped:
-            symbolName = UpdateChecker.shared.updateAvailable ? "arrow.down.circle" : "waveform"
-            iconPhase = 0
-        }
-        let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Vox")
-        img?.isTemplate = true
-        // Force consistent size
-        img?.size = NSSize(width: 18, height: 18)
-        button.image = img
     }
 
     @objc func togglePopover() {
@@ -99,38 +62,30 @@ struct FirstLaunchSetup {
         let configDir = Paths.configDir
         let fm = FileManager.default
 
-        // Create config directory
         try? fm.createDirectory(atPath: configDir, withIntermediateDirectories: true)
         try? fm.createDirectory(atPath: "\(configDir)/bin", withIntermediateDirectories: true)
 
-        // Default config files
         let voiceFile = "\(configDir)/voice"
         let speedFile = "\(configDir)/speed"
         if !fm.fileExists(atPath: voiceFile) { try? "5".write(toFile: voiceFile, atomically: true, encoding: .utf8) }
         if !fm.fileExists(atPath: speedFile) { try? "1.0".write(toFile: speedFile, atomically: true, encoding: .utf8) }
 
-        // Create request file
         let requestFile = "\(configDir)/.request"
         if !fm.fileExists(atPath: requestFile) { fm.createFile(atPath: requestFile, contents: nil) }
 
-        // Write version
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.5.1"
         try? version.write(toFile: "\(configDir)/.version", atomically: true, encoding: .utf8)
 
-        // Extract bundled TTS engine + model to ~/.vox/ (avoids SIP/DYLD issues in .app bundle)
         extractBundleResources()
 
-        // Remove old SpeakSel service if it exists
+        // Remove old SpeakSel remnants
         let oldWorkflow = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Services/Speak with SpeakSel.workflow").path
-        if fm.fileExists(atPath: oldWorkflow) {
-            try? fm.removeItem(atPath: oldWorkflow)
-        }
+        if fm.fileExists(atPath: oldWorkflow) { try? fm.removeItem(atPath: oldWorkflow) }
 
-        // Install Quick Action
         installQuickAction()
-
-        // Install shell helper
         installShellHelper()
+
+        log("FirstLaunchSetup complete. TTS bin exists: \(fm.fileExists(atPath: Paths.ttsBin)), Model exists: \(fm.fileExists(atPath: "\(Paths.modelDir)/model.onnx"))")
     }
 
     static func extractBundleResources() {
@@ -138,43 +93,55 @@ struct FirstLaunchSetup {
         let configDir = Paths.configDir
         let binDir = "\(configDir)/bin"
 
-        // Extract sherpa-onnx binary + dylibs from app bundle Frameworks
         let frameworksDir = Bundle.main.bundlePath + "/Contents/Frameworks"
+        log("Extracting from bundle: \(frameworksDir) exists=\(fm.fileExists(atPath: frameworksDir))")
+
         if fm.fileExists(atPath: frameworksDir) {
             if let files = try? fm.contentsOfDirectory(atPath: frameworksDir) {
+                log("Bundle Frameworks contents: \(files)")
                 for file in files {
                     let src = "\(frameworksDir)/\(file)"
                     let dst = "\(binDir)/\(file)"
-                    // Always overwrite on update
                     try? fm.removeItem(atPath: dst)
-                    try? fm.copyItem(atPath: src, toPath: dst)
-                    // Make executable
-                    try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dst)
+                    do {
+                        try fm.copyItem(atPath: src, toPath: dst)
+                        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dst)
+                        log("Extracted: \(file)")
+                    } catch {
+                        log("Failed to extract \(file): \(error)")
+                    }
                 }
             }
         }
 
-        // Extract model from app bundle Resources
         let bundleModelDir = Bundle.main.bundlePath + "/Contents/Resources/kokoro-en-v0_19"
         let localModelDir = "\(configDir)/kokoro-en-v0_19"
+        log("Bundle model dir exists: \(fm.fileExists(atPath: bundleModelDir)), local model exists: \(fm.fileExists(atPath: "\(localModelDir)/model.onnx"))")
+
         if fm.fileExists(atPath: bundleModelDir) && !fm.fileExists(atPath: "\(localModelDir)/model.onnx") {
-            try? fm.copyItem(atPath: bundleModelDir, toPath: localModelDir)
+            do {
+                try fm.copyItem(atPath: bundleModelDir, toPath: localModelDir)
+                log("Model extracted to \(localModelDir)")
+            } catch {
+                log("Failed to extract model: \(error)")
+            }
         }
 
-        // Codesign extracted binaries (ad-hoc)
-        let codesignProcess = Process()
-        codesignProcess.executableURL = URL(fileURLWithPath: "/bin/bash")
-        codesignProcess.arguments = ["-c", """
+        // Codesign extracted binaries
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+        proc.arguments = ["-c", """
             cd "\(binDir)"
             xattr -cr . 2>/dev/null
             for f in *.dylib; do [ -f "$f" ] && codesign --force --sign - "$f" 2>/dev/null; done
             [ -f sherpa-onnx-offline-tts ] && codesign --force --sign - sherpa-onnx-offline-tts 2>/dev/null
             true
         """]
-        codesignProcess.standardOutput = FileHandle.nullDevice
-        codesignProcess.standardError = FileHandle.nullDevice
-        try? codesignProcess.run()
-        codesignProcess.waitUntilExit()
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        try? proc.run()
+        proc.waitUntilExit()
+        log("Codesign complete")
     }
 
     static func installQuickAction() {
@@ -253,7 +220,6 @@ struct FirstLaunchSetup {
         try? infoPlist.write(toFile: "\(workflowDir)/Info.plist", atomically: true, encoding: .utf8)
         try? wflow.write(toFile: "\(workflowDir)/document.wflow", atomically: true, encoding: .utf8)
 
-        // Refresh services
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/System/Library/CoreServices/pbs")
         process.arguments = ["-flush"]
@@ -290,24 +256,31 @@ struct FirstLaunchSetup {
     }
 }
 
-// MARK: - Paths (always use ~/.vox/ — bundle resources extracted on first launch)
+// MARK: - Logging
+
+func log(_ message: String) {
+    let logFile = "\(Paths.configDir)/vox.log"
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(timestamp)] \(message)\n"
+    if let handle = FileHandle(forWritingAtPath: logFile) {
+        handle.seekToEndOfFile()
+        handle.write(line.data(using: .utf8)!)
+        handle.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: logFile, contents: line.data(using: .utf8))
+    }
+}
+
+// MARK: - Paths
 
 struct Paths {
     static let configDir: String = {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vox").path
     }()
 
-    static var ttsBin: String {
-        "\(configDir)/bin/sherpa-onnx-offline-tts"
-    }
-
-    static var modelDir: String {
-        "\(configDir)/kokoro-en-v0_19"
-    }
-
-    static var libDir: String {
-        "\(configDir)/bin"
-    }
+    static var ttsBin: String { "\(configDir)/bin/sherpa-onnx-offline-tts" }
+    static var modelDir: String { "\(configDir)/kokoro-en-v0_19" }
+    static var libDir: String { "\(configDir)/bin" }
 }
 
 // MARK: - Waveform View
@@ -426,7 +399,7 @@ struct ControlsView: View {
             if let errorMsg = engine.lastError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle").foregroundColor(.red).font(.caption)
-                    Text(errorMsg).font(.caption2).foregroundColor(.red).lineLimit(2)
+                    Text(errorMsg).font(.caption2).foregroundColor(.red).lineLimit(3)
                     Spacer()
                 }
             }
@@ -616,6 +589,7 @@ class TTSEngine: ObservableObject {
         fileWatcher = source
 
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.handleRequest() }
+        log("File watcher started on \(requestFile)")
     }
 
     private func handleRequest() {
@@ -624,6 +598,7 @@ class TTSEngine: ObservableObject {
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         try? "".write(toFile: requestFile, atomically: true, encoding: .utf8)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        log("Request received: \(trimmed.prefix(100))...")
         if trimmed == "__STOP__" { stop() }
         else if trimmed == "__TOGGLE__" { toggle() }
         else { speak(text: trimmed) }
@@ -635,13 +610,14 @@ class TTSEngine: ObservableObject {
         let cleaned = TextCleaner.clean(text)
         guard !cleaned.isEmpty else { return }
 
-        // Verify TTS binary exists
         guard FileManager.default.fileExists(atPath: Paths.ttsBin) else {
             lastError = "TTS engine not found at \(Paths.ttsBin)"
+            log("ERROR: \(lastError!)")
             return
         }
         guard FileManager.default.fileExists(atPath: "\(Paths.modelDir)/model.onnx") else {
             lastError = "Kokoro model not found at \(Paths.modelDir)"
+            log("ERROR: \(lastError!)")
             return
         }
 
@@ -656,6 +632,8 @@ class TTSEngine: ObservableObject {
         currentIndex = 0
         audioFiles = []
         generateQueue = sentences
+
+        log("Speaking \(totalWords) words in \(totalSentences) chunks")
 
         DispatchQueue.main.async {
             self.state = .playing
@@ -713,31 +691,47 @@ class TTSEngine: ObservableObject {
                 "--output-filename=\(outFile)",
                 sentence
             ]
-            // Set DYLD_LIBRARY_PATH so sherpa-onnx finds its dylibs
+
+            // DYLD_LIBRARY_PATH for the child process to find dylibs
             var env = ProcessInfo.processInfo.environment
             env["DYLD_LIBRARY_PATH"] = Paths.libDir
             process.environment = env
 
-            // Capture stderr for debugging
             let errPipe = Pipe()
-            process.standardOutput = FileHandle.nullDevice
+            let outPipe = Pipe()
+            process.standardOutput = outPipe
             process.standardError = errPipe
+
+            log("TTS generating chunk \(index): \(sentence.prefix(60))...")
+            log("TTS bin: \(Paths.ttsBin)")
+            log("DYLD_LIBRARY_PATH: \(Paths.libDir)")
 
             do {
                 try process.run()
                 process.waitUntilExit()
             } catch {
-                DispatchQueue.main.async { self.lastError = "Failed to launch TTS: \(error.localizedDescription)" }
+                let msg = "Failed to launch TTS: \(error.localizedDescription)"
+                log("ERROR: \(msg)")
+                DispatchQueue.main.async { self.lastError = msg }
                 return
             }
 
             let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             let errStr = String(data: errData, encoding: .utf8) ?? ""
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let outStr = String(data: outData, encoding: .utf8) ?? ""
 
-            if process.terminationStatus != 0 {
-                DispatchQueue.main.async {
-                    self.lastError = "TTS failed (exit \(process.terminationStatus)): \(errStr.prefix(200))"
-                }
+            log("TTS exit code: \(process.terminationStatus)")
+            if !errStr.isEmpty { log("TTS stderr: \(errStr.prefix(500))") }
+            if !outStr.isEmpty { log("TTS stdout: \(outStr.prefix(500))") }
+
+            let wavExists = FileManager.default.fileExists(atPath: outFile)
+            log("WAV exists: \(wavExists) at \(outFile)")
+
+            if process.terminationStatus != 0 || !wavExists {
+                let msg = "TTS failed (exit \(process.terminationStatus)): \(errStr.prefix(200))"
+                log("ERROR: \(msg)")
+                DispatchQueue.main.async { self.lastError = msg }
                 return
             }
 
@@ -757,6 +751,7 @@ class TTSEngine: ObservableObject {
                 DispatchQueue.main.async {
                     self.state = .stopped; self.progress = 1.0; self.etaText = "done"
                     self.etaTimer?.invalidate(); self.cleanup()
+                    log("Playback complete")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if self.state == .stopped { self.etaText = "" } }
                 }
             }
@@ -765,6 +760,7 @@ class TTSEngine: ObservableObject {
 
         let file = audioFiles[currentIndex]
         let sentenceIndex = currentIndex
+        log("Playing chunk \(sentenceIndex): \(file)")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -772,8 +768,14 @@ class TTSEngine: ObservableObject {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
             process.arguments = [file]
             self.player = process
-            do { try process.run() } catch { return }
+            do {
+                try process.run()
+            } catch {
+                log("afplay failed to launch: \(error)")
+                return
+            }
             process.waitUntilExit()
+            log("afplay exit code: \(process.terminationStatus)")
 
             DispatchQueue.main.async {
                 try? FileManager.default.removeItem(atPath: file)
