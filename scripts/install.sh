@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# SpeakSel Installer — handles fresh install and updates
+# Vox Installer — handles fresh install and updates
 set -euo pipefail
 
-SPEAKSEL_DIR="${HOME}/.speaksel"
+VOX_DIR="${HOME}/.vox"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VERSION_FILE="${SPEAKSEL_DIR}/.version"
+VERSION_FILE="${VOX_DIR}/.version"
 
-echo "🗣️  SpeakSel Installer"
+echo "🗣️  Vox Installer"
 echo "====================="
 echo ""
 
@@ -23,23 +23,23 @@ fi
 echo "📦 Detected: macOS ${PLATFORM}"
 
 # Stop existing app if running
-echo "🔄 Stopping existing SpeakSel..."
-pkill -f "SpeakSel" 2>/dev/null || true
-launchctl unload "${HOME}/Library/LaunchAgents/com.speaksel.app.plist" 2>/dev/null || true
+echo "🔄 Stopping existing Vox..."
+pkill -f "Vox" 2>/dev/null || true
+launchctl unload "${HOME}/Library/LaunchAgents/com.vox.app.plist" 2>/dev/null || true
 sleep 1
 
 # Create directories
-mkdir -p "${SPEAKSEL_DIR}/bin"
+mkdir -p "${VOX_DIR}/bin"
 
 # --- Install binaries ---
 if [[ -f "${SCRIPT_DIR}/bin/sherpa-onnx-offline-tts" ]]; then
     echo "📋 Installing from release package..."
-    cp -f "${SCRIPT_DIR}/bin/"* "${SPEAKSEL_DIR}/bin/"
+    cp -f "${SCRIPT_DIR}/bin/"* "${VOX_DIR}/bin/"
     if [[ -d "${SCRIPT_DIR}/kokoro-en-v0_19" ]]; then
         # Only copy model if not already installed (it's big)
-        if [[ ! -f "${SPEAKSEL_DIR}/kokoro-en-v0_19/model.onnx" ]]; then
+        if [[ ! -f "${VOX_DIR}/kokoro-en-v0_19/model.onnx" ]]; then
             echo "📦 Installing Kokoro model (~350MB)..."
-            cp -r "${SCRIPT_DIR}/kokoro-en-v0_19" "${SPEAKSEL_DIR}/"
+            cp -r "${SCRIPT_DIR}/kokoro-en-v0_19" "${VOX_DIR}/"
         else
             echo "📦 Model already installed, skipping..."
         fi
@@ -52,59 +52,59 @@ else
     echo "📦 Extracting sherpa-onnx..."
     cd "${TMPFILE}" && tar xf sherpa.tar.bz2
     SHERPA_DIR=$(ls -d sherpa-onnx-*)
-    cp "${SHERPA_DIR}/bin/sherpa-onnx-offline-tts" "${SPEAKSEL_DIR}/bin/"
-    cp "${SHERPA_DIR}/lib/"*.dylib "${SPEAKSEL_DIR}/bin/" 2>/dev/null || true
+    cp "${SHERPA_DIR}/bin/sherpa-onnx-offline-tts" "${VOX_DIR}/bin/"
+    cp "${SHERPA_DIR}/lib/"*.dylib "${VOX_DIR}/bin/" 2>/dev/null || true
 
-    if [[ ! -f "${SPEAKSEL_DIR}/kokoro-en-v0_19/model.onnx" ]]; then
+    if [[ ! -f "${VOX_DIR}/kokoro-en-v0_19/model.onnx" ]]; then
         echo "📥 Downloading Kokoro English model..."
         curl -sL "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2" -o "${TMPFILE}/kokoro.tar.bz2"
         echo "📦 Extracting model (~350MB)..."
-        cd "${SPEAKSEL_DIR}" && tar xf "${TMPFILE}/kokoro.tar.bz2"
+        cd "${VOX_DIR}" && tar xf "${TMPFILE}/kokoro.tar.bz2"
     fi
     rm -rf "${TMPFILE}"
 fi
 
 # --- Install menu bar app ---
-if [[ -f "${SCRIPT_DIR}/SpeakSel" ]]; then
+if [[ -f "${SCRIPT_DIR}/Vox" ]]; then
     echo "🖥️  Installing menu bar app..."
-    cp -f "${SCRIPT_DIR}/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
-elif [[ -f "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" ]]; then
+    cp -f "${SCRIPT_DIR}/Vox" "${VOX_DIR}/bin/Vox"
+elif [[ -f "${SCRIPT_DIR}/../VoxApp/.build/release/Vox" ]]; then
     echo "🖥️  Installing menu bar app (from source)..."
-    cp -f "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
+    cp -f "${SCRIPT_DIR}/../VoxApp/.build/release/Vox" "${VOX_DIR}/bin/Vox"
 fi
 
 # --- Codesign all binaries (required by macOS Gatekeeper) ---
 echo "🔐 Codesigning binaries (required by macOS Gatekeeper)..."
-xattr -cr "${SPEAKSEL_DIR}/bin/"
-for f in "${SPEAKSEL_DIR}/bin/"*.dylib; do
+xattr -cr "${VOX_DIR}/bin/"
+for f in "${VOX_DIR}/bin/"*.dylib; do
     echo "  signing $(basename "$f")..."
     codesign --force --deep --sign - "$f"
 done
 echo "  signing sherpa-onnx-offline-tts..."
-codesign --force --deep --sign - "${SPEAKSEL_DIR}/bin/sherpa-onnx-offline-tts"
-if [[ -f "${SPEAKSEL_DIR}/bin/SpeakSel" ]]; then
-    echo "  signing SpeakSel..."
-    codesign --force --deep --sign - "${SPEAKSEL_DIR}/bin/SpeakSel"
+codesign --force --deep --sign - "${VOX_DIR}/bin/sherpa-onnx-offline-tts"
+if [[ -f "${VOX_DIR}/bin/Vox" ]]; then
+    echo "  signing Vox..."
+    codesign --force --deep --sign - "${VOX_DIR}/bin/Vox"
 fi
-chmod +x "${SPEAKSEL_DIR}/bin/"*
+chmod +x "${VOX_DIR}/bin/"*
 echo "✅ Codesigning complete"
 
 # --- Install shell script ---
-cp -f "${SCRIPT_DIR}/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || \
-    cp -f "${SCRIPT_DIR}/../scripts/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || \
-    cp -f "${SCRIPT_DIR}/scripts/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || true
-chmod +x "${SPEAKSEL_DIR}/speaksel.sh"
+cp -f "${SCRIPT_DIR}/vox.sh" "${VOX_DIR}/vox.sh" 2>/dev/null || \
+    cp -f "${SCRIPT_DIR}/../scripts/vox.sh" "${VOX_DIR}/vox.sh" 2>/dev/null || \
+    cp -f "${SCRIPT_DIR}/scripts/vox.sh" "${VOX_DIR}/vox.sh" 2>/dev/null || true
+chmod +x "${VOX_DIR}/vox.sh"
 
 # --- Default config (don't overwrite existing) ---
-[[ -f "${SPEAKSEL_DIR}/voice" ]] || echo "5" > "${SPEAKSEL_DIR}/voice"
-[[ -f "${SPEAKSEL_DIR}/speed" ]] || echo "1.0" > "${SPEAKSEL_DIR}/speed"
-touch "${SPEAKSEL_DIR}/.request"
+[[ -f "${VOX_DIR}/voice" ]] || echo "5" > "${VOX_DIR}/voice"
+[[ -f "${VOX_DIR}/speed" ]] || echo "1.0" > "${VOX_DIR}/speed"
+touch "${VOX_DIR}/.request"
 
 # --- macOS Quick Action ---
 echo "🔧 Installing Quick Action..."
 SERVICES_DIR="${HOME}/Library/Services"
 mkdir -p "${SERVICES_DIR}"
-WORKFLOW_DIR="${SERVICES_DIR}/Speak with SpeakSel.workflow"
+WORKFLOW_DIR="${SERVICES_DIR}/Speak with Vox.workflow"
 mkdir -p "${WORKFLOW_DIR}/Contents"
 
 cat > "${WORKFLOW_DIR}/Contents/Info.plist" << 'PLIST'
@@ -118,7 +118,7 @@ cat > "${WORKFLOW_DIR}/Contents/Info.plist" << 'PLIST'
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
-				<string>Speak with SpeakSel</string>
+				<string>Speak with Vox</string>
 			</dict>
 			<key>NSMessage</key>
 			<string>runWorkflowAsService</string>
@@ -189,8 +189,8 @@ cat > "${WORKFLOW_DIR}/Contents/document.wflow" << 'WFLOW'
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>export DYLD_LIBRARY_PATH="${HOME}/.speaksel/bin:${DYLD_LIBRARY_PATH:-}"
-echo "$@" | "${HOME}/.speaksel/speaksel.sh"</string>
+					<string>export DYLD_LIBRARY_PATH="${HOME}/.vox/bin:${DYLD_LIBRARY_PATH:-}"
+echo "$@" | "${HOME}/.vox/vox.sh"</string>
 					<key>CheckedForUserDefaultShell</key>
 					<true/>
 					<key>inputMethod</key>
@@ -243,24 +243,24 @@ echo "$@" | "${HOME}/.speaksel/speaksel.sh"</string>
 WFLOW
 
 # --- Launch Agent (auto-start on login) ---
-if [[ -f "${SPEAKSEL_DIR}/bin/SpeakSel" ]]; then
+if [[ -f "${VOX_DIR}/bin/Vox" ]]; then
     LAUNCH_AGENT_DIR="${HOME}/Library/LaunchAgents"
     mkdir -p "${LAUNCH_AGENT_DIR}"
-    cat > "${LAUNCH_AGENT_DIR}/com.speaksel.app.plist" << LAUNCHPLIST
+    cat > "${LAUNCH_AGENT_DIR}/com.vox.app.plist" << LAUNCHPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.speaksel.app</string>
+    <string>com.vox.app</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${SPEAKSEL_DIR}/bin/SpeakSel</string>
+        <string>${VOX_DIR}/bin/Vox</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>DYLD_LIBRARY_PATH</key>
-        <string>${SPEAKSEL_DIR}/bin</string>
+        <string>${VOX_DIR}/bin</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -271,17 +271,17 @@ if [[ -f "${SPEAKSEL_DIR}/bin/SpeakSel" ]]; then
 LAUNCHPLIST
 
     # Launch the app
-    launchctl load "${LAUNCH_AGENT_DIR}/com.speaksel.app.plist" 2>/dev/null || true
+    launchctl load "${LAUNCH_AGENT_DIR}/com.vox.app.plist" 2>/dev/null || true
     # Also start directly in case launchctl doesn't trigger immediately
-    DYLD_LIBRARY_PATH="${SPEAKSEL_DIR}/bin" nohup "${SPEAKSEL_DIR}/bin/SpeakSel" &>/dev/null &
+    DYLD_LIBRARY_PATH="${VOX_DIR}/bin" nohup "${VOX_DIR}/bin/Vox" &>/dev/null &
     echo "✅ Menu bar app installed & launched"
 fi
 
 # --- Update script ---
-cat > "${SPEAKSEL_DIR}/update.sh" << 'UPDATE'
+cat > "${VOX_DIR}/update.sh" << 'UPDATE'
 #!/usr/bin/env bash
 set -euo pipefail
-echo "🔄 Updating SpeakSel..."
+echo "🔄 Updating Vox..."
 
 # Need gh CLI
 if ! command -v gh &>/dev/null; then
@@ -289,7 +289,7 @@ if ! command -v gh &>/dev/null; then
     brew install gh 2>/dev/null || { echo "❌ Need 'gh' CLI. Install with: brew install gh"; exit 1; }
 fi
 
-REPO="tlockcuff/speaksel"
+REPO="tlockcuff/vox"
 TMPDIR=$(mktemp -d)
 
 echo "📥 Downloading latest release..."
@@ -301,7 +301,7 @@ gh release download --repo "${REPO}" --pattern "*.zip" --dir "${TMPDIR}" 2>/dev/
 ZIP=$(ls "${TMPDIR}"/*.zip | head -1)
 echo "📦 Extracting..."
 cd "${TMPDIR}" && unzip -qo "${ZIP}"
-DIR=$(ls -d "${TMPDIR}"/SpeakSel-macOS* | head -1)
+DIR=$(ls -d "${TMPDIR}"/Vox-macOS* | head -1)
 
 echo "🔧 Installing..."
 cd "${DIR}" && bash ./install.sh
@@ -309,20 +309,20 @@ cd "${DIR}" && bash ./install.sh
 rm -rf "${TMPDIR}"
 echo "✅ Update complete!"
 UPDATE
-chmod +x "${SPEAKSEL_DIR}/update.sh"
+chmod +x "${VOX_DIR}/update.sh"
 
 # --- Uninstall script ---
-cat > "${SPEAKSEL_DIR}/uninstall.sh" << 'UNINSTALL'
+cat > "${VOX_DIR}/uninstall.sh" << 'UNINSTALL'
 #!/usr/bin/env bash
-echo "🗑️  Uninstalling SpeakSel..."
-pkill -f "SpeakSel" 2>/dev/null || true
-launchctl unload "${HOME}/Library/LaunchAgents/com.speaksel.app.plist" 2>/dev/null || true
-rm -f "${HOME}/Library/LaunchAgents/com.speaksel.app.plist"
-rm -rf "${HOME}/.speaksel"
-rm -rf "${HOME}/Library/Services/Speak with SpeakSel.workflow"
-echo "✅ SpeakSel removed."
+echo "🗑️  Uninstalling Vox..."
+pkill -f "Vox" 2>/dev/null || true
+launchctl unload "${HOME}/Library/LaunchAgents/com.vox.app.plist" 2>/dev/null || true
+rm -f "${HOME}/Library/LaunchAgents/com.vox.app.plist"
+rm -rf "${HOME}/.vox"
+rm -rf "${HOME}/Library/Services/Speak with Vox.workflow"
+echo "✅ Vox removed."
 UNINSTALL
-chmod +x "${SPEAKSEL_DIR}/uninstall.sh"
+chmod +x "${VOX_DIR}/uninstall.sh"
 
 # --- Save version ---
 echo "v0.5.0" > "${VERSION_FILE}"
@@ -331,22 +331,22 @@ echo "v0.5.0" > "${VERSION_FILE}"
 /System/Library/CoreServices/pbs -flush 2>/dev/null || true
 
 echo ""
-echo "✅ SpeakSel installed successfully!"
+echo "✅ Vox installed successfully!"
 echo ""
-echo "📍 Install:  ${SPEAKSEL_DIR}/"
-echo "📍 Action:   ~/Library/Services/Speak with SpeakSel.workflow"
+echo "📍 Install:  ${VOX_DIR}/"
+echo "📍 Action:   ~/Library/Services/Speak with Vox.workflow"
 echo ""
 echo "🎯 Usage:"
-echo "   • Highlight text → Right-click → Services → Speak with SpeakSel"
+echo "   • Highlight text → Right-click → Services → Speak with Vox"
 echo "   • Click the 🔊 menu bar icon for playback controls"
 echo ""
-echo "🔄 Update:     ~/.speaksel/update.sh"
-echo "🗑️  Uninstall:  ~/.speaksel/uninstall.sh"
+echo "🔄 Update:     ~/.vox/update.sh"
+echo "🗑️  Uninstall:  ~/.vox/uninstall.sh"
 echo ""
 echo "⌨️  Tip: Set a keyboard shortcut in System Settings → Keyboard → Keyboard Shortcuts → Services"
 echo ""
 
 # Quick test
 echo "🧪 Running quick test..."
-export DYLD_LIBRARY_PATH="${SPEAKSEL_DIR}/bin:${DYLD_LIBRARY_PATH:-}"
-echo 'SpeakSel is ready to go!' | "${SPEAKSEL_DIR}/speaksel.sh" && echo "✅ Test passed!" || echo "⚠️  Test failed"
+export DYLD_LIBRARY_PATH="${VOX_DIR}/bin:${DYLD_LIBRARY_PATH:-}"
+echo 'Vox is ready to go!' | "${VOX_DIR}/vox.sh" && echo "✅ Test passed!" || echo "⚠️  Test failed"

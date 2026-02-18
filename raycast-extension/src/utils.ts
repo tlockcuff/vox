@@ -3,8 +3,8 @@ import { homedir } from "os";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 
-const SPEAKSEL_DIR = path.join(homedir(), ".speaksel");
-const SCRIPT = path.join(SPEAKSEL_DIR, "speaksel.sh");
+const VOX_DIR = path.join(homedir(), ".vox");
+const SCRIPT = path.join(VOX_DIR, "vox.sh");
 
 export function isInstalled(): boolean {
   return existsSync(SCRIPT);
@@ -13,7 +13,7 @@ export function isInstalled(): boolean {
 export function runCommand(cmd: string): string {
   const env = {
     ...process.env,
-    DYLD_LIBRARY_PATH: `${SPEAKSEL_DIR}/bin:${process.env.DYLD_LIBRARY_PATH || ""}`,
+    DYLD_LIBRARY_PATH: `${VOX_DIR}/bin:${process.env.DYLD_LIBRARY_PATH || ""}`,
   };
   try {
     return execSync(`"${SCRIPT}" ${cmd}`, { env, timeout: 30000 }).toString().trim();
@@ -25,7 +25,7 @@ export function runCommand(cmd: string): string {
 export function speak(text: string): void {
   const env = {
     ...process.env,
-    DYLD_LIBRARY_PATH: `${SPEAKSEL_DIR}/bin:${process.env.DYLD_LIBRARY_PATH || ""}`,
+    DYLD_LIBRARY_PATH: `${VOX_DIR}/bin:${process.env.DYLD_LIBRARY_PATH || ""}`,
   };
   const { execFile } = require("child_process");
   execFile(SCRIPT, ["speak", text], { env, timeout: 60000 }, () => {});
@@ -49,20 +49,20 @@ export function getStatus(): { state: string; voice: string; speed: string } {
 }
 
 export function setVoice(id: string): void {
-  writeFileSync(path.join(SPEAKSEL_DIR, "voice"), id);
+  writeFileSync(path.join(VOX_DIR, "voice"), id);
 }
 
 export function setSpeed(speed: string): void {
-  writeFileSync(path.join(SPEAKSEL_DIR, "speed"), speed);
+  writeFileSync(path.join(VOX_DIR, "speed"), speed);
 }
 
 export function getVoice(): string {
-  const f = path.join(SPEAKSEL_DIR, "voice");
+  const f = path.join(VOX_DIR, "voice");
   return existsSync(f) ? readFileSync(f, "utf-8").trim() : "5";
 }
 
 export function getSpeed(): string {
-  const f = path.join(SPEAKSEL_DIR, "speed");
+  const f = path.join(VOX_DIR, "speed");
   return existsSync(f) ? readFileSync(f, "utf-8").trim() : "1.0";
 }
 

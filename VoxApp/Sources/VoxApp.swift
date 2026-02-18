@@ -3,7 +3,7 @@ import AppKit
 import AVFoundation
 
 @main
-struct SpeakSelApp: App {
+struct VoxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -27,7 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "SpeakSel")
+            button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "Vox")
             button.action = #selector(togglePopover)
             button.target = self
         }
@@ -58,7 +58,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if UpdateChecker.shared.updateAvailable {
                 button.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: "Update Available")
             } else {
-                button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "SpeakSel")
+                button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "Vox")
             }
             iconPhase = 0
         }
@@ -111,7 +111,7 @@ struct FirstLaunchSetup {
             .appendingPathComponent("Library/Services").path
         try? FileManager.default.createDirectory(atPath: servicesDir, withIntermediateDirectories: true)
 
-        let workflowDir = "\(servicesDir)/Speak with SpeakSel.workflow/Contents"
+        let workflowDir = "\(servicesDir)/Speak with Vox.workflow/Contents"
         try? FileManager.default.createDirectory(atPath: workflowDir, withIntermediateDirectories: true)
 
         let infoPlist = """
@@ -123,7 +123,7 @@ struct FirstLaunchSetup {
             <array>
                 <dict>
                     <key>NSMenuItem</key>
-                    <dict><key>default</key><string>Speak with SpeakSel</string></dict>
+                    <dict><key>default</key><string>Speak with Vox</string></dict>
                     <key>NSMessage</key><string>runWorkflowAsService</string>
                     <key>NSSendTypes</key>
                     <array><string>NSStringPboardType</string></array>
@@ -133,7 +133,7 @@ struct FirstLaunchSetup {
         </plist>
         """
 
-        let speakselBin = Paths.configDir
+        let voxBin = Paths.configDir
         let wflow = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -154,7 +154,7 @@ struct FirstLaunchSetup {
                 <key>ActionBundlePath</key><string>/System/Library/Automator/Run Shell Script.action</string>
                 <key>ActionName</key><string>Run Shell Script</string>
                 <key>ActionParameters</key><dict>
-                    <key>COMMAND_STRING</key><string>echo "$@" | "\(speakselBin)/speaksel.sh"</string>
+                    <key>COMMAND_STRING</key><string>echo "$@" | "\(voxBin)/vox.sh"</string>
                     <key>CheckedForUserDefaultShell</key><true/>
                     <key>inputMethod</key><integer>1</integer>
                     <key>shell</key><string>/bin/bash</string>
@@ -190,12 +190,12 @@ struct FirstLaunchSetup {
     }
 
     static func installShellHelper() {
-        // Write a small shell script to ~/.speaksel/ that delegates to the app's bundled binary
+        // Write a small shell script to ~/.vox/ that delegates to the app's bundled binary
         let script = """
         #!/usr/bin/env bash
         set -euo pipefail
-        SPEAKSEL_DIR="${HOME}/.speaksel"
-        REQUEST_FILE="${SPEAKSEL_DIR}/.request"
+        VOX_DIR="${HOME}/.vox"
+        REQUEST_FILE="${VOX_DIR}/.request"
 
         case "${1:-speak}" in
             stop)    echo "__STOP__" > "${REQUEST_FILE}" ;;
@@ -210,7 +210,7 @@ struct FirstLaunchSetup {
                 ;;
         esac
         """
-        let path = "\(Paths.configDir)/speaksel.sh"
+        let path = "\(Paths.configDir)/vox.sh"
         try? script.write(toFile: path, atomically: true, encoding: .utf8)
         // Make executable
         let process = Process()
@@ -225,11 +225,11 @@ struct FirstLaunchSetup {
 
 struct Paths {
     static let configDir: String = {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".speaksel").path
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vox").path
     }()
 
     static var ttsBin: String {
-        // Look in app bundle first, then ~/.speaksel/bin
+        // Look in app bundle first, then ~/.vox/bin
         if let bundlePath = Bundle.main.path(forAuxiliaryExecutable: "sherpa-onnx-offline-tts") {
             return bundlePath
         }
@@ -372,7 +372,7 @@ struct ControlsView: View {
             HStack {
                 Text("v\(UpdateChecker.shared.currentVersion)").font(.caption2).foregroundColor(.secondary)
                 Spacer()
-                Button("Quit SpeakSel") { NSApp.terminate(nil) }.font(.caption).foregroundColor(.secondary)
+                Button("Quit Vox") { NSApp.terminate(nil) }.font(.caption).foregroundColor(.secondary)
             }
         }
         .padding()
@@ -722,7 +722,7 @@ class UpdateChecker: ObservableObject {
     @Published var updateError: String?
 
     let currentVersion: String
-    private let repo = "tlockcuff/speaksel"
+    private let repo = "tlockcuff/vox"
 
     init() {
         let versionFile = "\(Paths.configDir)/.version"

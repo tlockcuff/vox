@@ -5,7 +5,7 @@ export default async function Command() {
   if (!isInstalled()) {
     await showToast({
       style: Toast.Style.Failure,
-      title: "SpeakSel not installed",
+      title: "Vox not installed",
       message: "Run the install.sh script first",
     });
     return;

@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# SpeakSel — Speak selected text using Kokoro TTS via sherpa-onnx
+# Vox — Speak selected text using Kokoro TTS via sherpa-onnx
 # If the menu bar app is running, delegates to it. Otherwise plays directly.
 
 set -euo pipefail
 
-SPEAKSEL_DIR="${HOME}/.speaksel"
-MODEL_DIR="${SPEAKSEL_DIR}/kokoro-en-v0_19"
-TTS_BIN="${SPEAKSEL_DIR}/bin/sherpa-onnx-offline-tts"
-REQUEST_FILE="${SPEAKSEL_DIR}/.request"
-WAV_FILE="${SPEAKSEL_DIR}/.current.wav"
+VOX_DIR="${HOME}/.vox"
+MODEL_DIR="${VOX_DIR}/kokoro-en-v0_19"
+TTS_BIN="${VOX_DIR}/bin/sherpa-onnx-offline-tts"
+REQUEST_FILE="${VOX_DIR}/.request"
+WAV_FILE="${VOX_DIR}/.current.wav"
 
-export DYLD_LIBRARY_PATH="${SPEAKSEL_DIR}/bin:${DYLD_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="${VOX_DIR}/bin:${DYLD_LIBRARY_PATH:-}"
 
 # Read config
 VOICE="5"
 SPEED="1.0"
-[[ -f "${SPEAKSEL_DIR}/voice" ]] && VOICE=$(cat "${SPEAKSEL_DIR}/voice" | tr -d '[:space:]')
-[[ -f "${SPEAKSEL_DIR}/speed" ]] && SPEED=$(cat "${SPEAKSEL_DIR}/speed" | tr -d '[:space:]')
+[[ -f "${VOX_DIR}/voice" ]] && VOICE=$(cat "${VOX_DIR}/voice" | tr -d '[:space:]')
+[[ -f "${VOX_DIR}/speed" ]] && SPEED=$(cat "${VOX_DIR}/speed" | tr -d '[:space:]')
 
 # --- Commands ---
 stop_playback() {
     # Signal the menu bar app
     echo "__STOP__" > "${REQUEST_FILE}"
     # Also kill any direct playback
-    pkill -f "afplay.*speaksel" 2>/dev/null || true
+    pkill -f "afplay.*vox" 2>/dev/null || true
     pkill -f "afplay.*chunk_" 2>/dev/null || true
 }
 
@@ -33,7 +33,7 @@ speak_text() {
     text="${text:0:10000}"
 
     # If menu bar app is running, delegate to it
-    if pgrep -f "SpeakSel" >/dev/null 2>&1; then
+    if pgrep -f "Vox" >/dev/null 2>&1; then
         echo "${text}" > "${REQUEST_FILE}"
         return
     fi

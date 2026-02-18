@@ -31,9 +31,9 @@ jobs:
           fi
           echo "SHORT_VERSION=$(echo ${GITHUB_REF#refs/tags/v} | sed 's/^v//')" >> $GITHUB_OUTPUT
 
-      - name: Build SpeakSel
+      - name: Build Vox
         run: |
-          cd SpeakSelApp
+          cd VoxApp
           swift build -c release
           cd ..
 
@@ -60,7 +60,7 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
           SHORT_VERSION="${VERSION#v}"
 
-          APP="SpeakSel.app"
+          APP="Vox.app"
           CONTENTS="${APP}/Contents"
           MACOS="${CONTENTS}/MacOS"
           FRAMEWORKS="${CONTENTS}/Frameworks"
@@ -69,7 +69,7 @@ jobs:
           mkdir -p "${MACOS}" "${FRAMEWORKS}" "${RESOURCES}"
 
           # Main executable
-          cp SpeakSelApp/.build/release/SpeakSel "${MACOS}/SpeakSel"
+          cp VoxApp/.build/release/Vox "${MACOS}/Vox"
 
           # TTS engine + dylibs in Frameworks
           cp staging/bin/sherpa-onnx-offline-tts "${FRAMEWORKS}/"
@@ -95,17 +95,17 @@ jobs:
           <plist version="1.0">
           <dict>
               <key>CFBundleName</key>
-              <string>SpeakSel</string>
+              <string>Vox</string>
               <key>CFBundleDisplayName</key>
-              <string>SpeakSel</string>
+              <string>Vox</string>
               <key>CFBundleIdentifier</key>
-              <string>com.tlockcuff.speaksel</string>
+              <string>com.tlockcuff.vox</string>
               <key>CFBundleVersion</key>
               <string>${SHORT_VERSION}</string>
               <key>CFBundleShortVersionString</key>
               <string>${SHORT_VERSION}</string>
               <key>CFBundleExecutable</key>
-              <string>SpeakSel</string>
+              <string>Vox</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>LSMinimumSystemVersion</key>
@@ -121,62 +121,62 @@ jobs:
           # Codesign everything
           codesign --force --deep --sign - "${FRAMEWORKS}/"*.dylib
           codesign --force --deep --sign - "${FRAMEWORKS}/sherpa-onnx-offline-tts"
-          codesign --force --deep --sign - "${MACOS}/SpeakSel"
+          codesign --force --deep --sign - "${MACOS}/Vox"
           codesign --force --deep --sign - "${APP}"
 
-          chmod +x "${MACOS}/SpeakSel" "${FRAMEWORKS}/sherpa-onnx-offline-tts"
+          chmod +x "${MACOS}/Vox" "${FRAMEWORKS}/sherpa-onnx-offline-tts"
 
       - name: Create DMG
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          DMG_NAME="SpeakSel-${VERSION}.dmg"
+          DMG_NAME="Vox-${VERSION}.dmg"
 
           mkdir -p dmg-staging
-          cp -r SpeakSel.app dmg-staging/
+          cp -r Vox.app dmg-staging/
           ln -s /Applications dmg-staging/Applications
 
-          hdiutil create -volname "SpeakSel" -srcfolder dmg-staging -ov -format UDZO "${DMG_NAME}"
+          hdiutil create -volname "Vox" -srcfolder dmg-staging -ov -format UDZO "${DMG_NAME}"
           rm -rf dmg-staging
 
       - name: Also create zip (for update.sh)
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           # Create a zip of the .app for programmatic updates
-          mkdir -p SpeakSel-macOS
-          cp -r SpeakSel.app SpeakSel-macOS/
-          cp scripts/speaksel.sh SpeakSel-macOS/
-          cp scripts/install.sh SpeakSel-macOS/
-          sed -i '' "s/v0.5.0/${VERSION}/g" SpeakSel-macOS/install.sh
-          cp README.md SpeakSel-macOS/
+          mkdir -p Vox-macOS
+          cp -r Vox.app Vox-macOS/
+          cp scripts/vox.sh Vox-macOS/
+          cp scripts/install.sh Vox-macOS/
+          sed -i '' "s/v0.5.0/${VERSION}/g" Vox-macOS/install.sh
+          cp README.md Vox-macOS/
           # Also include bin/ and model for install.sh compatibility
-          mkdir -p SpeakSel-macOS/bin
-          cp SpeakSel.app/Contents/Frameworks/* SpeakSel-macOS/bin/
-          cp SpeakSel.app/Contents/MacOS/SpeakSel SpeakSel-macOS/SpeakSel
-          chmod +x SpeakSel-macOS/install.sh SpeakSel-macOS/speaksel.sh SpeakSel-macOS/SpeakSel
-          zip -r "SpeakSel-macOS-${VERSION}.zip" SpeakSel-macOS/
+          mkdir -p Vox-macOS/bin
+          cp Vox.app/Contents/Frameworks/* Vox-macOS/bin/
+          cp Vox.app/Contents/MacOS/Vox Vox-macOS/Vox
+          chmod +x Vox-macOS/install.sh Vox-macOS/vox.sh Vox-macOS/Vox
+          zip -r "Vox-macOS-${VERSION}.zip" Vox-macOS/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
-          name: SpeakSel ${{ steps.version.outputs.VERSION }}
+          name: Vox ${{ steps.version.outputs.VERSION }}
           body: |
-            ## SpeakSel ${{ steps.version.outputs.VERSION }}
+            ## Vox ${{ steps.version.outputs.VERSION }}
 
             **Highlight → Right-Click → Speak** with natural AI voices on macOS.
 
             ### Installation
 
             **Option 1: DMG (Recommended)**
-            1. Download `SpeakSel-${{ steps.version.outputs.VERSION }}.dmg`
+            1. Download `Vox-${{ steps.version.outputs.VERSION }}.dmg`
             2. Open the DMG
-            3. Drag **SpeakSel** to **Applications**
-            4. Launch SpeakSel from Applications
+            3. Drag **Vox** to **Applications**
+            4. Launch Vox from Applications
             5. First launch installs the right-click Quick Action automatically
 
             **Option 2: CLI**
             ```bash
-            ~/.speaksel/update.sh
+            ~/.vox/update.sh
             ```
 
             ### Features
@@ -188,7 +188,7 @@ jobs:
             - 🧹 Smart text cleanup (strips URLs, markdown, HTML)
             - 🔄 Built-in update checker
           files: |
-            SpeakSel-${{ steps.version.outputs.VERSION }}.dmg
-            SpeakSel-macOS-${{ steps.version.outputs.VERSION }}.zip
+            Vox-${{ steps.version.outputs.VERSION }}.dmg
+            Vox-macOS-${{ steps.version.outputs.VERSION }}.zip
           draft: false
           prerelease: false

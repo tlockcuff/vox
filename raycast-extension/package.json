@@ -1,7 +1,7 @@
 {
   "$schema": "https://www.raycast.com/schemas/extension.json",
-  "name": "speaksel",
-  "title": "SpeakSel",
+  "name": "vox",
+  "title": "Vox",
   "description": "Speak selected text with natural AI voices (Kokoro TTS)",
   "icon": "icon.png",
   "author": "tlockcuff",
@@ -51,7 +51,7 @@
     {
       "name": "speak-selection",
       "title": "Speak Selected Text",
-      "subtitle": "SpeakSel",
+      "subtitle": "Vox",
       "description": "Read the currently selected text aloud using Kokoro TTS",
       "mode": "no-view",
       "keywords": ["speak", "read", "tts", "voice"]
@@ -59,7 +59,7 @@
     {
       "name": "stop-speaking",
       "title": "Stop Speaking",
-      "subtitle": "SpeakSel",
+      "subtitle": "Vox",
       "description": "Stop current audio playback",
       "mode": "no-view",
       "keywords": ["stop", "silence", "quiet"]
@@ -67,15 +67,15 @@
     {
       "name": "toggle-playback",
       "title": "Pause/Resume Speaking",
-      "subtitle": "SpeakSel",
+      "subtitle": "Vox",
       "description": "Toggle pause/resume on current playback",
       "mode": "no-view",
       "keywords": ["pause", "resume", "toggle"]
     },
     {
       "name": "playback-controls",
-      "title": "SpeakSel Controls",
-      "subtitle": "SpeakSel",
+      "title": "Vox Controls",
+      "subtitle": "Vox",
       "description": "Visual playback controls with speed and voice settings",
       "mode": "view",
       "keywords": ["controls", "player", "settings"]

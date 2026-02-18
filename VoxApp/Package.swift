@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "SpeakSel",
+    name: "Vox",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "SpeakSel",
+            name: "Vox",
             path: "Sources"
         )
     ]

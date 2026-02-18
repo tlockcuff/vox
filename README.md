@@ -1,4 +1,4 @@
-# SpeakSel 🗣️
+# Vox 🗣️
 
 **Highlight → Right-Click → Speak** — Natural AI-powered text-to-speech for macOS.
 
@@ -8,23 +8,23 @@ Uses [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (82M parameter open-wei
 
 ### Option 1: Download Release (Recommended)
 
-1. Go to [Releases](../../releases) and download the latest `SpeakSel-macOS.zip`
+1. Go to [Releases](../../releases) and download the latest `Vox-macOS.zip`
 2. Unzip it
 3. Run the installer:
    ```bash
-   cd SpeakSel-macOS
+   cd Vox-macOS
    ./install.sh
    ```
 4. Follow the prompts — it will:
-   - Install the TTS engine + Kokoro model to `~/.speaksel/`
+   - Install the TTS engine + Kokoro model to `~/.vox/`
    - Install the macOS Quick Action (right-click menu)
    - Verify everything works
 
 ### Option 2: Build from Source
 
 ```bash
-git clone https://github.com/tlockcuff/speaksel.git
-cd speaksel
+git clone https://github.com/tlockcuff/vox.git
+cd vox
 ./scripts/build.sh
 ./install.sh
 ```
@@ -32,16 +32,16 @@ cd speaksel
 ## Usage
 
 1. **Highlight any text** in any macOS application
-2. **Right-click** → **Services** → **Speak with SpeakSel**
+2. **Right-click** → **Services** → **Speak with Vox**
 3. 🔊 Audio plays immediately
 
 ### Keyboard Shortcut (Optional)
 
-After installing, go to **System Settings → Keyboard → Keyboard Shortcuts → Services → Text** and assign a shortcut to "Speak with SpeakSel" (e.g., `⌘⇧S`).
+After installing, go to **System Settings → Keyboard → Keyboard Shortcuts → Services → Text** and assign a shortcut to "Speak with Vox" (e.g., `⌘⇧S`).
 
 ## Voices
 
-SpeakSel ships with 11 English Kokoro voices:
+Vox ships with 11 English Kokoro voices:
 
 | ID | Name | Description |
 |----|------|-------------|
@@ -61,15 +61,15 @@ SpeakSel ships with 11 English Kokoro voices:
 
 ```bash
 # Set voice by speaker ID
-echo "5" > ~/.speaksel/voice
+echo "5" > ~/.vox/voice
 
 # Or set speed (default 1.0, range 0.5-2.0)
-echo "1.2" > ~/.speaksel/speed
+echo "1.2" > ~/.vox/speed
 ```
 
 ## Configuration
 
-Config files live in `~/.speaksel/`:
+Config files live in `~/.vox/`:
 
 - `voice` — Speaker ID (0-10, default: 5 for am_adam)
 - `speed` — Playback speed multiplier (default: 1.0)
@@ -77,7 +77,7 @@ Config files live in `~/.speaksel/`:
 ## Uninstall
 
 ```bash
-~/.speaksel/uninstall.sh
+~/.vox/uninstall.sh
 ```
 
 ## How It Works
