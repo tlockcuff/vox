@@ -311,25 +311,6 @@ jobs:
             echo "⚠️ DMG notarization skipped — shipping signed-only"
           fi
 
-      - name: Also create zip (for update.sh)
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          rm -rf dmg-staging
-          mkdir -p Vox-macOS
-          cp -r Vox.app Vox-macOS/
-          cp scripts/vox.sh Vox-macOS/
-          cp scripts/install.sh Vox-macOS/
-          sed -i '' "s/v0.5.0/${VERSION}/g" Vox-macOS/install.sh
-          cp README.md Vox-macOS/
-          mkdir -p Vox-macOS/bin
-          cp Vox.app/Contents/Frameworks/*.dylib Vox-macOS/bin/ 2>/dev/null || true
-          cp Vox.app/Contents/Frameworks/sherpa-onnx-offline-tts Vox-macOS/bin/ 2>/dev/null || true
-          cp Vox.app/Contents/MacOS/Vox Vox-macOS/Vox
-          # Model not included — app downloads on first launch (~350MB)
-          # cp -r staging/kokoro-en-v0_19 Vox-macOS/
-          chmod +x Vox-macOS/install.sh Vox-macOS/vox.sh Vox-macOS/Vox
-          zip -r "Vox-macOS-${VERSION}.zip" Vox-macOS/
-
       - name: Cleanup keychain
         if: always()
         run: |
@@ -429,6 +410,5 @@ jobs:
             - ✅ Signed & notarized — no Gatekeeper warnings
           files: |
             Vox-${{ steps.version.outputs.VERSION }}.dmg
-            Vox-macOS-${{ steps.version.outputs.VERSION }}.zip
           draft: false
           prerelease: false
