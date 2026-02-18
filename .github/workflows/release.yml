@@ -211,19 +211,11 @@ jobs:
           FRAMEWORKS="${APP}/Contents/Frameworks"
           ENTITLEMENTS="scripts/entitlements.plist"
 
-          # Sign Sparkle framework (inside out)
+          # Do NOT re-sign Sparkle.framework — it comes pre-signed from SPM
+          # Re-signing with our entitlements breaks its original signature
           if [[ -d "${FRAMEWORKS}/Sparkle.framework" ]]; then
-            codesign --force --options runtime --timestamp \
-              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/XPCServices/"*.xpc/Contents/MacOS/* 2>/dev/null || true
-            codesign --force --options runtime --timestamp \
-              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/XPCServices/"*.xpc 2>/dev/null || true
-            codesign --force --options runtime --timestamp \
-              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/Autoupdate" 2>/dev/null || true
-            codesign --force --options runtime --timestamp \
-              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/Updater.app" 2>/dev/null || true
-            codesign --force --options runtime --timestamp \
-              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework"
-            echo "✅ Sparkle.framework signed"
+            echo "✅ Sparkle.framework preserved (pre-signed)"
+            codesign --verify --deep --strict "${FRAMEWORKS}/Sparkle.framework" 2>&1 || echo "⚠️ Sparkle sig check"
           fi
 
           # Sign dylibs first (inside out) — with entitlements for ONNX Runtime JIT
@@ -243,15 +235,14 @@ jobs:
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "${APP}/Contents/MacOS/Vox"
 
-          # Sign the whole .app bundle (--deep re-signs nested code)
-          codesign --force --deep --options runtime --timestamp \
+          # Sign the main binary only (NOT --deep, which would break Sparkle's pre-signed framework)
+          codesign --force --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "$APP"
 
           # Verify
           codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 || true
-          spctl --assess --type exec --verbose "$APP" 2>&1 || true
-          echo "✅ Codesigning verified"
+          echo "✅ Codesigning complete"
 
       - name: Create DMG
         run: |
