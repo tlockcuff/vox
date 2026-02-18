@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# SpeakSel Installer
+# SpeakSel Installer — handles fresh install and updates
 set -euo pipefail
 
 SPEAKSEL_DIR="${HOME}/.speaksel"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERSION_FILE="${SPEAKSEL_DIR}/.version"
 
 echo "🗣️  SpeakSel Installer"
 echo "====================="
@@ -19,62 +20,86 @@ else
     echo "❌ Unsupported architecture: ${ARCH}"
     exit 1
 fi
-
 echo "📦 Detected: macOS ${PLATFORM}"
-echo ""
+
+# Stop existing app if running
+echo "🔄 Stopping existing SpeakSel..."
+pkill -f "SpeakSel" 2>/dev/null || true
+launchctl unload "${HOME}/Library/LaunchAgents/com.speaksel.app.plist" 2>/dev/null || true
+sleep 1
 
 # Create directories
 mkdir -p "${SPEAKSEL_DIR}/bin"
 
-# Check if this is a release install (pre-bundled) or from source
+# --- Install binaries ---
 if [[ -f "${SCRIPT_DIR}/bin/sherpa-onnx-offline-tts" ]]; then
     echo "📋 Installing from release package..."
-    cp -r "${SCRIPT_DIR}/bin/"* "${SPEAKSEL_DIR}/bin/"
-    cp -r "${SCRIPT_DIR}/kokoro-en-v0_19" "${SPEAKSEL_DIR}/"
+    cp -f "${SCRIPT_DIR}/bin/"* "${SPEAKSEL_DIR}/bin/"
+    if [[ -d "${SCRIPT_DIR}/kokoro-en-v0_19" ]]; then
+        # Only copy model if not already installed (it's big)
+        if [[ ! -f "${SPEAKSEL_DIR}/kokoro-en-v0_19/model.onnx" ]]; then
+            echo "📦 Installing Kokoro model (~350MB)..."
+            cp -r "${SCRIPT_DIR}/kokoro-en-v0_19" "${SPEAKSEL_DIR}/"
+        else
+            echo "📦 Model already installed, skipping..."
+        fi
+    fi
 else
     echo "📥 Downloading sherpa-onnx..."
     SHERPA_VERSION="v1.12.25"
-    SHERPA_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}-osx-universal2-shared.tar.bz2"
-
     TMPFILE=$(mktemp -d)
-    curl -sL "${SHERPA_URL}" -o "${TMPFILE}/sherpa.tar.bz2"
+    curl -sL "https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}-osx-universal2-shared.tar.bz2" -o "${TMPFILE}/sherpa.tar.bz2"
     echo "📦 Extracting sherpa-onnx..."
-    cd "${TMPFILE}"
-    tar xf sherpa.tar.bz2
+    cd "${TMPFILE}" && tar xf sherpa.tar.bz2
     SHERPA_DIR=$(ls -d sherpa-onnx-*)
-
-    # Copy the TTS binary and required libraries
     cp "${SHERPA_DIR}/bin/sherpa-onnx-offline-tts" "${SPEAKSEL_DIR}/bin/"
     cp "${SHERPA_DIR}/lib/"*.dylib "${SPEAKSEL_DIR}/bin/" 2>/dev/null || true
-    chmod +x "${SPEAKSEL_DIR}/bin/sherpa-onnx-offline-tts"
 
-    echo "📥 Downloading Kokoro English model..."
-    MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2"
-    curl -sL "${MODEL_URL}" -o "${TMPFILE}/kokoro.tar.bz2"
-    echo "📦 Extracting model (~350MB)..."
-    cd "${SPEAKSEL_DIR}"
-    tar xf "${TMPFILE}/kokoro.tar.bz2"
-
-    # Cleanup
+    if [[ ! -f "${SPEAKSEL_DIR}/kokoro-en-v0_19/model.onnx" ]]; then
+        echo "📥 Downloading Kokoro English model..."
+        curl -sL "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2" -o "${TMPFILE}/kokoro.tar.bz2"
+        echo "📦 Extracting model (~350MB)..."
+        cd "${SPEAKSEL_DIR}" && tar xf "${TMPFILE}/kokoro.tar.bz2"
+    fi
     rm -rf "${TMPFILE}"
-    cd "${SPEAKSEL_DIR}"
 fi
 
-# Install the speak script
-cp "${SCRIPT_DIR}/../scripts/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || \
-    cp "${SCRIPT_DIR}/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || \
-    cp "${SCRIPT_DIR}/scripts/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh"
+# --- Install menu bar app ---
+if [[ -f "${SCRIPT_DIR}/SpeakSel" ]]; then
+    echo "🖥️  Installing menu bar app..."
+    cp -f "${SCRIPT_DIR}/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
+elif [[ -f "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" ]]; then
+    echo "🖥️  Installing menu bar app (from source)..."
+    cp -f "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
+fi
+
+# --- Codesign all binaries (required by macOS Gatekeeper) ---
+echo "🔐 Codesigning binaries..."
+xattr -cr "${SPEAKSEL_DIR}/bin/" 2>/dev/null || true
+for f in "${SPEAKSEL_DIR}/bin/"*.dylib; do
+    codesign --force --sign - "$f" 2>/dev/null || true
+done
+codesign --force --sign - "${SPEAKSEL_DIR}/bin/sherpa-onnx-offline-tts" 2>/dev/null || true
+if [[ -f "${SPEAKSEL_DIR}/bin/SpeakSel" ]]; then
+    codesign --force --sign - "${SPEAKSEL_DIR}/bin/SpeakSel" 2>/dev/null || true
+fi
+chmod +x "${SPEAKSEL_DIR}/bin/"*
+
+# --- Install shell script ---
+cp -f "${SCRIPT_DIR}/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || \
+    cp -f "${SCRIPT_DIR}/../scripts/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || \
+    cp -f "${SCRIPT_DIR}/scripts/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || true
 chmod +x "${SPEAKSEL_DIR}/speaksel.sh"
 
-# Set default config
+# --- Default config (don't overwrite existing) ---
 [[ -f "${SPEAKSEL_DIR}/voice" ]] || echo "5" > "${SPEAKSEL_DIR}/voice"
 [[ -f "${SPEAKSEL_DIR}/speed" ]] || echo "1.0" > "${SPEAKSEL_DIR}/speed"
+touch "${SPEAKSEL_DIR}/.request"
 
-# Install the macOS Quick Action
-echo "🔧 Installing macOS Quick Action..."
+# --- macOS Quick Action ---
+echo "🔧 Installing Quick Action..."
 SERVICES_DIR="${HOME}/Library/Services"
 mkdir -p "${SERVICES_DIR}"
-
 WORKFLOW_DIR="${SERVICES_DIR}/Speak with SpeakSel.workflow"
 mkdir -p "${WORKFLOW_DIR}/Contents"
 
@@ -140,14 +165,6 @@ cat > "${WORKFLOW_DIR}/Contents/document.wflow" << 'WFLOW'
 				<string>AMCategoryUtilities</string>
 				<key>AMIconName</key>
 				<string>Run Shell Script</string>
-				<key>AMKeywords</key>
-				<array>
-					<string>Shell</string>
-					<string>Script</string>
-					<string>Command</string>
-					<string>Run</string>
-					<string>Unix</string>
-				</array>
 				<key>AMName</key>
 				<string>Run Shell Script</string>
 				<key>AMProvides</key>
@@ -195,14 +212,6 @@ echo "$@" | "${HOME}/.speaksel/speaksel.sh"</string>
 				<string>RunShellScriptAction</string>
 				<key>InputUUID</key>
 				<string>A1A1A1A1-B2B2-C3C3-D4D4-E5E5E5E5E5E5</string>
-				<key>Keywords</key>
-				<array>
-					<string>Shell</string>
-					<string>Script</string>
-					<string>Command</string>
-					<string>Run</string>
-					<string>Unix</string>
-				</array>
 				<key>OutputUUID</key>
 				<string>F6F6F6F6-A7A7-B8B8-C9C9-D0D0D0D0D0D0</string>
 				<key>UUID</key>
@@ -212,79 +221,9 @@ echo "$@" | "${HOME}/.speaksel/speaksel.sh"</string>
 					<string>Automator</string>
 				</array>
 				<key>arguments</key>
-				<dict>
-					<key>0</key>
-					<dict>
-						<key>default value</key>
-						<integer>0</integer>
-						<key>name</key>
-						<string>inputMethod</string>
-						<key>required</key>
-						<string>0</string>
-						<key>type</key>
-						<integer>0</integer>
-						<key>uuid</key>
-						<string>0</string>
-					</dict>
-					<key>1</key>
-					<dict>
-						<key>default value</key>
-						<string></string>
-						<key>name</key>
-						<string>source</string>
-						<key>required</key>
-						<string>0</string>
-						<key>type</key>
-						<integer>4</integer>
-						<key>uuid</key>
-						<string>1</string>
-					</dict>
-					<key>2</key>
-					<dict>
-						<key>default value</key>
-						<false/>
-						<key>name</key>
-						<string>CheckedForUserDefaultShell</string>
-						<key>required</key>
-						<string>0</string>
-						<key>type</key>
-						<integer>0</integer>
-						<key>uuid</key>
-						<string>2</string>
-					</dict>
-					<key>3</key>
-					<dict>
-						<key>default value</key>
-						<string></string>
-						<key>name</key>
-						<string>COMMAND_STRING</string>
-						<key>required</key>
-						<string>0</string>
-						<key>type</key>
-						<integer>4</integer>
-						<key>uuid</key>
-						<string>3</string>
-					</dict>
-					<key>4</key>
-					<dict>
-						<key>default value</key>
-						<string>/bin/sh</string>
-						<key>name</key>
-						<string>shell</string>
-						<key>required</key>
-						<string>0</string>
-						<key>type</key>
-						<integer>4</integer>
-						<key>uuid</key>
-						<string>4</string>
-					</dict>
-				</dict>
+				<dict/>
 				<key>isViewVisible</key>
 				<integer>1</integer>
-				<key>location</key>
-				<string>449.000000:620.000000</string>
-				<key>nibPath</key>
-				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
 		</dict>
 	</array>
@@ -299,17 +238,8 @@ echo "$@" | "${HOME}/.speaksel/speaksel.sh"</string>
 </plist>
 WFLOW
 
-# Install menu bar app
-if [[ -f "${SCRIPT_DIR}/SpeakSel" ]] || [[ -f "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" ]]; then
-    echo "🖥️  Installing menu bar app..."
-    if [[ -f "${SCRIPT_DIR}/SpeakSel" ]]; then
-        cp "${SCRIPT_DIR}/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
-    else
-        cp "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
-    fi
-    chmod +x "${SPEAKSEL_DIR}/bin/SpeakSel"
-
-    # Create Launch Agent to auto-start on login
+# --- Launch Agent (auto-start on login) ---
+if [[ -f "${SPEAKSEL_DIR}/bin/SpeakSel" ]]; then
     LAUNCH_AGENT_DIR="${HOME}/Library/LaunchAgents"
     mkdir -p "${LAUNCH_AGENT_DIR}"
     cat > "${LAUNCH_AGENT_DIR}/com.speaksel.app.plist" << LAUNCHPLIST
@@ -336,23 +266,62 @@ if [[ -f "${SCRIPT_DIR}/SpeakSel" ]] || [[ -f "${SCRIPT_DIR}/../SpeakSelApp/.bui
 </plist>
 LAUNCHPLIST
 
-    # Start the app now
+    # Launch the app
     launchctl load "${LAUNCH_AGENT_DIR}/com.speaksel.app.plist" 2>/dev/null || true
-    echo "✅ Menu bar app installed (auto-starts on login)"
+    # Also start directly in case launchctl doesn't trigger immediately
+    DYLD_LIBRARY_PATH="${SPEAKSEL_DIR}/bin" nohup "${SPEAKSEL_DIR}/bin/SpeakSel" &>/dev/null &
+    echo "✅ Menu bar app installed & launched"
 fi
 
-# Create request file for app communication
-touch "${SPEAKSEL_DIR}/.request"
+# --- Update script ---
+cat > "${SPEAKSEL_DIR}/update.sh" << 'UPDATE'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "🔄 Updating SpeakSel..."
 
-# Install uninstaller
+# Need gh CLI
+if ! command -v gh &>/dev/null; then
+    echo "📥 Installing GitHub CLI..."
+    brew install gh 2>/dev/null || { echo "❌ Need 'gh' CLI. Install with: brew install gh"; exit 1; }
+fi
+
+REPO="tlockcuff/speaksel"
+TMPDIR=$(mktemp -d)
+
+echo "📥 Downloading latest release..."
+gh release download --repo "${REPO}" --pattern "*.zip" --dir "${TMPDIR}" 2>/dev/null || {
+    echo "❌ Download failed. Make sure you're authenticated: gh auth login"
+    exit 1
+}
+
+ZIP=$(ls "${TMPDIR}"/*.zip | head -1)
+echo "📦 Extracting..."
+cd "${TMPDIR}" && unzip -qo "${ZIP}"
+DIR=$(ls -d "${TMPDIR}"/SpeakSel-macOS* | head -1)
+
+echo "🔧 Installing..."
+cd "${DIR}" && bash ./install.sh
+
+rm -rf "${TMPDIR}"
+echo "✅ Update complete!"
+UPDATE
+chmod +x "${SPEAKSEL_DIR}/update.sh"
+
+# --- Uninstall script ---
 cat > "${SPEAKSEL_DIR}/uninstall.sh" << 'UNINSTALL'
 #!/usr/bin/env bash
 echo "🗑️  Uninstalling SpeakSel..."
+pkill -f "SpeakSel" 2>/dev/null || true
+launchctl unload "${HOME}/Library/LaunchAgents/com.speaksel.app.plist" 2>/dev/null || true
+rm -f "${HOME}/Library/LaunchAgents/com.speaksel.app.plist"
 rm -rf "${HOME}/.speaksel"
 rm -rf "${HOME}/Library/Services/Speak with SpeakSel.workflow"
-echo "✅ SpeakSel has been removed."
+echo "✅ SpeakSel removed."
 UNINSTALL
 chmod +x "${SPEAKSEL_DIR}/uninstall.sh"
+
+# --- Save version ---
+echo "v0.3.0" > "${VERSION_FILE}"
 
 # Refresh services
 /System/Library/CoreServices/pbs -flush 2>/dev/null || true
@@ -360,16 +329,20 @@ chmod +x "${SPEAKSEL_DIR}/uninstall.sh"
 echo ""
 echo "✅ SpeakSel installed successfully!"
 echo ""
-echo "📍 Engine: ${SPEAKSEL_DIR}/bin/sherpa-onnx-offline-tts"
-echo "📍 Model:  ${SPEAKSEL_DIR}/kokoro-en-v0_19/"
-echo "📍 Action: ~/Library/Services/Speak with SpeakSel.workflow"
+echo "📍 Install:  ${SPEAKSEL_DIR}/"
+echo "📍 Action:   ~/Library/Services/Speak with SpeakSel.workflow"
 echo ""
-echo "🎯 Usage: Highlight text → Right-click → Services → Speak with SpeakSel"
+echo "🎯 Usage:"
+echo "   • Highlight text → Right-click → Services → Speak with SpeakSel"
+echo "   • Click the 🔊 menu bar icon for playback controls"
 echo ""
-echo "⌨️  Tip: Set a keyboard shortcut in System Settings → Keyboard → Keyboard Shortcuts → Services → Text"
+echo "🔄 Update:     ~/.speaksel/update.sh"
+echo "🗑️  Uninstall:  ~/.speaksel/uninstall.sh"
+echo ""
+echo "⌨️  Tip: Set a keyboard shortcut in System Settings → Keyboard → Keyboard Shortcuts → Services"
 echo ""
 
 # Quick test
 echo "🧪 Running quick test..."
 export DYLD_LIBRARY_PATH="${SPEAKSEL_DIR}/bin:${DYLD_LIBRARY_PATH:-}"
-echo "SpeakSel is ready to go!" | "${SPEAKSEL_DIR}/speaksel.sh" && echo "✅ Test passed! You should hear audio." || echo "⚠️  Test failed — check the output above."
+echo 'SpeakSel is ready to go!' | "${SPEAKSEL_DIR}/speaksel.sh" && echo "✅ Test passed!" || echo "⚠️  Test failed"
