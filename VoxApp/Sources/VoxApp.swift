@@ -73,8 +73,10 @@ struct FirstLaunchSetup {
         let requestFile = "\(Paths.legacyDir)/.request"
         if !fm.fileExists(atPath: requestFile) { fm.createFile(atPath: requestFile, contents: nil) }
 
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.5.1"
+        let version = AppVersion.current
         try? version.write(toFile: "\(configDir)/.version", atomically: true, encoding: .utf8)
+        // Also write to legacy dir
+        try? version.write(toFile: "\(Paths.legacyDir)/.version", atomically: true, encoding: .utf8)
 
         extractBundleResources()
 
@@ -259,6 +261,27 @@ struct FirstLaunchSetup {
         try? process.run()
         process.waitUntilExit()
     }
+}
+
+// MARK: - App Version
+
+struct AppVersion {
+    static let current: String = {
+        // 1. Try the .app bundle Info.plist (set by CI)
+        if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, v != "1.0" {
+            return v
+        }
+        // 2. Try reading from .app's Info.plist directly (for nested binary case)
+        if Paths.isAppBundle {
+            let plistPath = Bundle.main.bundlePath + "/Contents/Info.plist"
+            if let dict = NSDictionary(contentsOfFile: plistPath),
+               let v = dict["CFBundleShortVersionString"] as? String {
+                return v
+            }
+        }
+        // 3. Fallback
+        return "0.6.0"
+    }()
 }
 
 // MARK: - Logging
@@ -1010,12 +1033,7 @@ class UpdateChecker: ObservableObject {
     private let repo = "tlockcuff/vox"
 
     init() {
-        let versionFile = "\(Paths.configDir)/.version"
-        if let v = try? String(contentsOfFile: versionFile, encoding: .utf8) {
-            currentVersion = v.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "v", with: "")
-        } else {
-            currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        }
+        currentVersion = AppVersion.current
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.checkForUpdates() }
         Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in self?.checkForUpdates() }
     }
