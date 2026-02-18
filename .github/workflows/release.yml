@@ -66,6 +66,10 @@ jobs:
             install_name_tool -change "@rpath/${dylib}" "@executable_path/${dylib}" sherpa-onnx-offline-tts 2>/dev/null || true
           done
 
+      - name: Stamp version
+        run: |
+          sed -i '' "s/v0.5.0/${{ steps.version.outputs.VERSION }}/g" scripts/install.sh
+
       - name: Package release
         run: |
           mkdir -p SpeakSel-macOS

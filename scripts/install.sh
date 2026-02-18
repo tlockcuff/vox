@@ -74,16 +74,20 @@ elif [[ -f "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" ]]; then
 fi
 
 # --- Codesign all binaries (required by macOS Gatekeeper) ---
-echo "🔐 Codesigning binaries..."
-xattr -cr "${SPEAKSEL_DIR}/bin/" 2>/dev/null || true
+echo "🔐 Codesigning binaries (required by macOS Gatekeeper)..."
+xattr -cr "${SPEAKSEL_DIR}/bin/"
 for f in "${SPEAKSEL_DIR}/bin/"*.dylib; do
-    codesign --force --sign - "$f" 2>/dev/null || true
+    echo "  signing $(basename "$f")..."
+    codesign --force --deep --sign - "$f"
 done
-codesign --force --sign - "${SPEAKSEL_DIR}/bin/sherpa-onnx-offline-tts" 2>/dev/null || true
+echo "  signing sherpa-onnx-offline-tts..."
+codesign --force --deep --sign - "${SPEAKSEL_DIR}/bin/sherpa-onnx-offline-tts"
 if [[ -f "${SPEAKSEL_DIR}/bin/SpeakSel" ]]; then
-    codesign --force --sign - "${SPEAKSEL_DIR}/bin/SpeakSel" 2>/dev/null || true
+    echo "  signing SpeakSel..."
+    codesign --force --deep --sign - "${SPEAKSEL_DIR}/bin/SpeakSel"
 fi
 chmod +x "${SPEAKSEL_DIR}/bin/"*
+echo "✅ Codesigning complete"
 
 # --- Install shell script ---
 cp -f "${SCRIPT_DIR}/speaksel.sh" "${SPEAKSEL_DIR}/speaksel.sh" 2>/dev/null || \
@@ -321,7 +325,7 @@ UNINSTALL
 chmod +x "${SPEAKSEL_DIR}/uninstall.sh"
 
 # --- Save version ---
-echo "v0.3.0" > "${VERSION_FILE}"
+echo "v0.5.0" > "${VERSION_FILE}"
 
 # Refresh services
 /System/Library/CoreServices/pbs -flush 2>/dev/null || true
