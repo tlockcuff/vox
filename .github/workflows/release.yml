@@ -263,13 +263,18 @@ jobs:
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "${APP}/Contents/MacOS/Vox"
 
-          # Sign the whole .app bundle
-          codesign --force --deep --options runtime --timestamp \
+          # Sign the main app binary only (no --deep: Sparkle + dylibs already signed above)
+          codesign --force --options runtime --timestamp \
+            --entitlements "$ENTITLEMENTS" \
+            --sign "$SIGNING_IDENTITY" "${APP}/Contents/MacOS/Vox"
+
+          # Then sign the .app wrapper
+          codesign --force --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" "$APP"
 
           # Verify
-          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 || true
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1
           echo "✅ Codesigning complete"
 
       - name: Create DMG
