@@ -11,29 +11,51 @@ struct SpeakSelApp: App {
     }
 }
 
+// MARK: - App Delegate
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var engine = TTSEngine.shared
+    private var iconTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide dock icon
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "SpeakSel")
+            button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "SpeakSel")
             button.action = #selector(togglePopover)
             button.target = self
         }
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 280, height: 200)
+        popover.contentSize = NSSize(width: 300, height: 320)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: ControlsView())
 
-        // Watch for speak requests via file
         engine.startWatching()
+
+        // Animate menu bar icon based on state
+        iconTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            self?.updateIcon()
+        }
+    }
+
+    private var iconPhase = 0
+    private func updateIcon() {
+        guard let button = statusItem.button else { return }
+        switch engine.state {
+        case .playing:
+            let icons = ["speaker.wave.1.fill", "speaker.wave.2.fill", "speaker.wave.3.fill", "speaker.wave.2.fill"]
+            iconPhase = (iconPhase + 1) % icons.count
+            button.image = NSImage(systemSymbolName: icons[iconPhase], accessibilityDescription: "Speaking")
+        case .paused:
+            button.image = NSImage(systemSymbolName: "speaker.badge.exclamationmark", accessibilityDescription: "Paused")
+        case .stopped:
+            button.image = NSImage(systemSymbolName: "speaker.slash", accessibilityDescription: "SpeakSel")
+            iconPhase = 0
+        }
     }
 
     @objc func togglePopover() {
@@ -47,40 +69,116 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// MARK: - Waveform View
+
+struct WaveformView: View {
+    let isActive: Bool
+    let isPaused: Bool
+    @State private var phase: Double = 0
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.05)) { timeline in
+            Canvas { context, size in
+                let barCount = 32
+                let barWidth = size.width / CGFloat(barCount) * 0.7
+                let gap = size.width / CGFloat(barCount) * 0.3
+                let maxHeight = size.height * 0.9
+
+                for i in 0..<barCount {
+                    let x = CGFloat(i) * (barWidth + gap) + gap / 2
+
+                    let height: CGFloat
+                    if isActive && !isPaused {
+                        // Animated waveform
+                        let t = timeline.date.timeIntervalSinceReferenceDate
+                        let wave1 = sin(Double(i) * 0.4 + t * 4.0) * 0.3
+                        let wave2 = sin(Double(i) * 0.7 + t * 2.5) * 0.2
+                        let wave3 = cos(Double(i) * 0.3 + t * 3.2) * 0.15
+                        let combined = 0.3 + abs(wave1 + wave2 + wave3)
+                        height = maxHeight * CGFloat(min(combined, 0.95))
+                    } else if isPaused {
+                        // Frozen waveform
+                        let wave = sin(Double(i) * 0.5) * 0.2
+                        height = maxHeight * CGFloat(0.25 + abs(wave))
+                    } else {
+                        // Flat line
+                        height = maxHeight * 0.05
+                    }
+
+                    let rect = CGRect(
+                        x: x,
+                        y: (size.height - height) / 2,
+                        width: barWidth,
+                        height: height
+                    )
+
+                    let color: Color = isActive ? (isPaused ? .yellow : .green) : .secondary
+                    context.fill(
+                        Path(roundedRect: rect, cornerRadius: barWidth / 2),
+                        with: .color(color.opacity(isActive ? 0.8 : 0.3))
+                    )
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Controls View
+
 struct ControlsView: View {
     @ObservedObject var engine = TTSEngine.shared
-    
+
     let speeds: [(String, Double)] = [
         ("0.5x", 0.5), ("0.75x", 0.75), ("1x", 1.0),
         ("1.25x", 1.25), ("1.5x", 1.5), ("2x", 2.0)
     ]
 
     var body: some View {
-        VStack(spacing: 12) {
-            // Status
+        VStack(spacing: 10) {
+            // Waveform
+            WaveformView(
+                isActive: engine.state != .stopped,
+                isPaused: engine.state == .paused
+            )
+            .frame(height: 60)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.black.opacity(0.2))
+            )
+
+            // Status + ETA
             HStack {
                 Image(systemName: engine.state == .playing ? "speaker.wave.3.fill" :
                         engine.state == .paused ? "pause.circle.fill" : "speaker.slash")
                     .foregroundColor(engine.state == .playing ? .green :
                         engine.state == .paused ? .yellow : .secondary)
-                    .font(.title2)
-                Text(engine.state == .playing ? "Speaking..." :
+                    .font(.title3)
+                Text(engine.state == .playing ? "Speaking" :
                         engine.state == .paused ? "Paused" : "Idle")
                     .font(.headline)
                 Spacer()
+                if engine.state != .stopped {
+                    Text(engine.etaText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
             }
 
-            // Progress (approximate)
+            // Progress bar
             if engine.state != .stopped {
                 ProgressView(value: engine.progress)
                     .progressViewStyle(.linear)
+                    .tint(engine.state == .paused ? .yellow : .green)
             }
 
-            // Controls
-            HStack(spacing: 16) {
+            // Transport controls
+            HStack(spacing: 20) {
                 Button(action: { engine.toggle() }) {
                     Image(systemName: engine.state == .playing ? "pause.fill" : "play.fill")
                         .font(.title2)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.plain)
                 .disabled(engine.state == .stopped)
@@ -88,28 +186,39 @@ struct ControlsView: View {
                 Button(action: { engine.stop() }) {
                     Image(systemName: "stop.fill")
                         .font(.title2)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.plain)
                 .disabled(engine.state == .stopped)
 
                 Spacer()
 
-                // Speed selector
-                Picker("", selection: $engine.speed) {
-                    ForEach(speeds, id: \.1) { label, value in
-                        Text(label).tag(value)
+                // Speed
+                HStack(spacing: 4) {
+                    Image(systemName: "gauge.with.dots.needle.33percent")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: $engine.speed) {
+                        ForEach(speeds, id: \.1) { label, value in
+                            Text(label).tag(value)
+                        }
                     }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 80)
-                .onChange(of: engine.speed) { _ in
-                    engine.saveSpeed()
+                    .pickerStyle(.menu)
+                    .frame(width: 70)
+                    .onChange(of: engine.speed) { _ in
+                        engine.saveSpeed()
+                    }
                 }
             }
 
-            // Voice
+            Divider()
+
+            // Voice picker
             HStack {
-                Text("Voice:")
+                Image(systemName: "person.wave.2")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+                Text("Voice")
                     .foregroundColor(.secondary)
                     .font(.caption)
                 Picker("", selection: $engine.voiceId) {
@@ -124,6 +233,21 @@ struct ControlsView: View {
                 }
             }
 
+            // Word count if available
+            if engine.state != .stopped {
+                HStack {
+                    Text("\(engine.wordCount) words")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("•")
+                        .foregroundColor(.secondary)
+                    Text("Chunk \(engine.currentIndex + 1)/\(engine.totalSentences)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            }
+
             // Quit
             HStack {
                 Spacer()
@@ -135,9 +259,11 @@ struct ControlsView: View {
             }
         }
         .padding()
-        .frame(width: 280)
+        .frame(width: 300)
     }
 }
+
+// MARK: - Data Types
 
 struct Voice: Identifiable {
     let id: Int
@@ -147,6 +273,64 @@ struct Voice: Identifiable {
 enum PlaybackState {
     case stopped, playing, paused
 }
+
+// MARK: - Text Cleanup
+
+struct TextCleaner {
+    static func clean(_ text: String) -> String {
+        var result = text
+
+        // Remove URLs
+        let urlPattern = #"https?://[^\s<>\]\)\"']+"#
+        result = result.replacingOccurrences(of: urlPattern, with: "", options: .regularExpression)
+
+        // Remove markdown links but keep text: [text](url) -> text
+        let mdLinkPattern = #"\[([^\]]+)\]\([^\)]+\)"#
+        result = result.replacingOccurrences(of: mdLinkPattern, with: "$1", options: .regularExpression)
+
+        // Remove markdown images: ![alt](url)
+        let mdImgPattern = #"!\[[^\]]*\]\([^\)]+\)"#
+        result = result.replacingOccurrences(of: mdImgPattern, with: "", options: .regularExpression)
+
+        // Remove markdown bold/italic markers
+        result = result.replacingOccurrences(of: #"\*\*([^*]+)\*\*"#, with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(of: #"\*([^*]+)\*"#, with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(of: #"__([^_]+)__"#, with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(of: #"_([^_]+)_"#, with: "$1", options: .regularExpression)
+
+        // Remove markdown headers (# ## ### etc)
+        result = result.replacingOccurrences(of: #"(?m)^#{1,6}\s+"#, with: "", options: .regularExpression)
+
+        // Remove inline code backticks
+        result = result.replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
+
+        // Remove code blocks
+        result = result.replacingOccurrences(of: #"```[\s\S]*?```"#, with: "", options: .regularExpression)
+
+        // Remove footnote references like [1], [2], etc.
+        result = result.replacingOccurrences(of: #"\[\d+\]"#, with: "", options: .regularExpression)
+
+        // Remove HTML tags
+        result = result.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+
+        // Remove email addresses
+        result = result.replacingOccurrences(of: #"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"#, with: "", options: .regularExpression)
+
+        // Remove file paths
+        result = result.replacingOccurrences(of: #"(?:/[\w.-]+){2,}"#, with: "", options: .regularExpression)
+
+        // Collapse multiple spaces/newlines
+        result = result.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+
+        // Remove bullet points and list markers
+        result = result.replacingOccurrences(of: #"(?m)^[\s]*[-*•]\s+"#, with: "", options: .regularExpression)
+        result = result.replacingOccurrences(of: #"(?m)^[\s]*\d+\.\s+"#, with: "", options: .regularExpression)
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+// MARK: - TTS Engine
 
 class TTSEngine: ObservableObject {
     static let shared = TTSEngine()
@@ -165,22 +349,29 @@ class TTSEngine: ObservableObject {
         Voice(id: 10, name: "BM - Lewis"),
     ]
 
+    // Average words per minute for Kokoro at 1.0 speed
+    private static let baseWPM: Double = 160
+
     @Published var state: PlaybackState = .stopped
     @Published var progress: Double = 0
     @Published var speed: Double = 1.0
     @Published var voiceId: Int = 5
+    @Published var etaText: String = ""
+    @Published var wordCount: Int = 0
+    @Published var currentIndex: Int = 0
+    @Published var totalSentences: Int = 0
 
     private let speakselDir: String
     private let ttsBin: String
     private let modelDir: String
-    private var playProcess: Process?
     private var generateQueue: [String] = []
-    private var isGenerating = false
     private var audioFiles: [String] = []
-    private var currentIndex = 0
-    private var totalSentences = 0
     private var player: Process?
     private var fileWatcher: DispatchSourceFileSystemObject?
+    private var startTime: Date?
+    private var totalWords: Int = 0
+    private var spokenWords: Int = 0
+    private var etaTimer: Timer?
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -207,10 +398,37 @@ class TTSEngine: ObservableObject {
         try? String(voiceId).write(toFile: "\(speakselDir)/voice", atomically: true, encoding: .utf8)
     }
 
+    // MARK: - ETA Calculation
+
+    private func updateETA() {
+        guard totalWords > 0, state != .stopped else {
+            etaText = ""
+            return
+        }
+
+        let remainingWords = totalWords - spokenWords
+        let effectiveWPM = TTSEngine.baseWPM * speed
+        let remainingSeconds = Int(Double(remainingWords) / effectiveWPM * 60)
+
+        if remainingSeconds < 5 {
+            etaText = "almost done"
+        } else if remainingSeconds < 60 {
+            etaText = "~\(remainingSeconds)s left"
+        } else {
+            let min = remainingSeconds / 60
+            let sec = remainingSeconds % 60
+            etaText = "~\(min)m \(sec)s left"
+        }
+    }
+
+    private func wordCountFor(_ text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace }).count
+    }
+
+    // MARK: - File Watching
+
     func startWatching() {
-        // Watch for .request file (written by the shell script / Quick Action)
         let requestFile = "\(speakselDir)/.request"
-        // Create file if it doesn't exist
         if !FileManager.default.fileExists(atPath: requestFile) {
             FileManager.default.createFile(atPath: requestFile, contents: nil)
         }
@@ -226,13 +444,10 @@ class TTSEngine: ObservableObject {
         source.setEventHandler { [weak self] in
             self?.handleRequest()
         }
-        source.setCancelHandler {
-            close(fd)
-        }
+        source.setCancelHandler { close(fd) }
         source.resume()
         fileWatcher = source
 
-        // Also poll periodically as backup
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.handleRequest()
         }
@@ -241,37 +456,57 @@ class TTSEngine: ObservableObject {
     private func handleRequest() {
         let requestFile = "\(speakselDir)/.request"
         guard let text = try? String(contentsOfFile: requestFile, encoding: .utf8),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
-        // Clear the request file immediately
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         try? "".write(toFile: requestFile, atomically: true, encoding: .utf8)
-        speak(text: text.trimmingCharacters(in: .whitespacesAndNewlines))
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "__STOP__" {
+            stop()
+        } else if trimmed == "__TOGGLE__" {
+            toggle()
+        } else {
+            speak(text: trimmed)
+        }
     }
+
+    // MARK: - Speak
 
     func speak(text: String) {
         stop()
 
-        // Split into sentences for streaming
-        let sentences = splitSentences(text)
+        // Clean the text first
+        let cleaned = TextCleaner.clean(text)
+        guard !cleaned.isEmpty else { return }
+
+        totalWords = wordCountFor(cleaned)
+        spokenWords = 0
+        wordCount = totalWords
+
+        let sentences = splitSentences(cleaned)
         guard !sentences.isEmpty else { return }
 
         totalSentences = sentences.count
         currentIndex = 0
         audioFiles = []
         generateQueue = sentences
+        startTime = Date()
 
         DispatchQueue.main.async {
             self.state = .playing
             self.progress = 0
+            self.updateETA()
         }
 
-        // Start generating sentences - pipeline style
+        // Start ETA timer
+        etaTimer?.invalidate()
+        etaTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateETA()
+        }
+
         generateAndPlay()
     }
 
     private func splitSentences(_ text: String) -> [String] {
-        // Split on sentence boundaries but keep chunks reasonable
         var sentences: [String] = []
         var current = ""
 
@@ -279,29 +514,24 @@ class TTSEngine: ObservableObject {
             current.append(char)
             if ".!?".contains(char) && current.count > 10 {
                 let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    sentences.append(trimmed)
-                }
+                if !trimmed.isEmpty { sentences.append(trimmed) }
                 current = ""
             }
         }
         let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            sentences.append(trimmed)
-        }
+        if !trimmed.isEmpty { sentences.append(trimmed) }
 
-        // If only one long sentence, split on commas/semicolons for faster first audio
         if sentences.count == 1 && sentences[0].count > 100 {
             let parts = sentences[0].components(separatedBy: CharacterSet(charactersIn: ",;:"))
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
-            if parts.count > 1 {
-                return parts
-            }
+            if parts.count > 1 { return parts }
         }
 
         return sentences
     }
+
+    // MARK: - Generate & Play Pipeline
 
     private func generateAndPlay() {
         guard !generateQueue.isEmpty else { return }
@@ -311,7 +541,7 @@ class TTSEngine: ObservableObject {
         let outFile = "\(speakselDir)/.chunk_\(index).wav"
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.state != .stopped else { return }
 
             let lengthScale = 1.0 / self.speed
             let process = Process()
@@ -337,19 +567,15 @@ class TTSEngine: ObservableObject {
             do {
                 try process.run()
                 process.waitUntilExit()
-            } catch {
-                return
-            }
+            } catch { return }
 
             DispatchQueue.main.async {
+                guard self.state != .stopped else { return }
                 self.audioFiles.append(outFile)
 
-                // If this is the first chunk, start playing immediately
                 if index == self.currentIndex {
                     self.playNext()
                 }
-
-                // Generate next sentence in pipeline
                 if !self.generateQueue.isEmpty {
                     self.generateAndPlay()
                 }
@@ -363,13 +589,20 @@ class TTSEngine: ObservableObject {
                 DispatchQueue.main.async {
                     self.state = .stopped
                     self.progress = 1.0
+                    self.etaText = "done"
+                    self.etaTimer?.invalidate()
                     self.cleanup()
+                    // Reset eta after a moment
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        if self.state == .stopped { self.etaText = "" }
+                    }
                 }
             }
             return
         }
 
         let file = audioFiles[currentIndex]
+        let sentenceIndex = currentIndex
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -377,23 +610,21 @@ class TTSEngine: ObservableObject {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
             process.arguments = [file]
-
             self.player = process
 
-            do {
-                try process.run()
-            } catch {
-                return
-            }
-
+            do { try process.run() } catch { return }
             process.waitUntilExit()
 
             DispatchQueue.main.async {
-                // Clean up played file
                 try? FileManager.default.removeItem(atPath: file)
+
+                // Update spoken word count (estimate from sentence ratio)
+                let fraction = Double(sentenceIndex + 1) / Double(self.totalSentences)
+                self.spokenWords = Int(fraction * Double(self.totalWords))
 
                 self.currentIndex += 1
                 self.progress = Double(self.currentIndex) / Double(self.totalSentences)
+                self.updateETA()
 
                 if self.state != .stopped {
                     self.playNext()
@@ -401,6 +632,8 @@ class TTSEngine: ObservableObject {
             }
         }
     }
+
+    // MARK: - Controls
 
     func toggle() {
         switch state {
@@ -420,12 +653,13 @@ class TTSEngine: ObservableObject {
         player?.terminate()
         player = nil
         generateQueue = []
+        etaTimer?.invalidate()
+        etaText = ""
         cleanup()
     }
 
     private func cleanup() {
-        // Remove chunk files
-        for i in 0..<totalSentences {
+        for i in 0..<max(totalSentences, 50) {
             try? FileManager.default.removeItem(atPath: "\(speakselDir)/.chunk_\(i).wav")
         }
     }
