@@ -216,7 +216,7 @@ jobs:
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait --timeout 600
+            --wait --timeout 1800
 
           # Staple the ticket to the app
           echo "📎 Stapling notarization ticket..."
@@ -243,7 +243,7 @@ jobs:
             --apple-id "${{ secrets.APPLE_ID }}" \
             --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" \
             --team-id "${{ secrets.APPLE_TEAM_ID }}" \
-            --wait --timeout 600
+            --wait --timeout 1800
           xcrun stapler staple "${DMG_NAME}"
           echo "✅ DMG signed + notarized"
 
