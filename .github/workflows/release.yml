@@ -241,6 +241,11 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
           DMG_NAME="Vox-${VERSION}.dmg"
 
+          # Free up disk space
+          rm -f Vox-notarize.zip
+          df -h . | tail -1
+          echo "---"
+
           mkdir -p dmg-staging
           cp -r Vox.app dmg-staging/
           ln -s /Applications dmg-staging/Applications
@@ -267,6 +272,7 @@ jobs:
       - name: Also create zip (for update.sh)
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
+          rm -rf dmg-staging
           mkdir -p Vox-macOS
           cp -r Vox.app Vox-macOS/
           cp scripts/vox.sh Vox-macOS/
@@ -276,7 +282,8 @@ jobs:
           mkdir -p Vox-macOS/bin
           cp Vox.app/Contents/Frameworks/* Vox-macOS/bin/
           cp Vox.app/Contents/MacOS/Vox Vox-macOS/Vox
-          cp -r staging/kokoro-en-v0_19 Vox-macOS/
+          # Model not included — app downloads on first launch (~350MB)
+          # cp -r staging/kokoro-en-v0_19 Vox-macOS/
           chmod +x Vox-macOS/install.sh Vox-macOS/vox.sh Vox-macOS/Vox
           zip -r "Vox-macOS-${VERSION}.zip" Vox-macOS/
 
