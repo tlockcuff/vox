@@ -171,6 +171,7 @@ jobs:
           mkdir -p Vox-macOS/bin
           cp Vox.app/Contents/Frameworks/* Vox-macOS/bin/
           cp Vox.app/Contents/MacOS/Vox Vox-macOS/Vox
+          cp -r Vox.app/Contents/Resources/kokoro-en-v0_19 Vox-macOS/
           chmod +x Vox-macOS/install.sh Vox-macOS/vox.sh Vox-macOS/Vox
           zip -r "Vox-macOS-${VERSION}.zip" Vox-macOS/
 
