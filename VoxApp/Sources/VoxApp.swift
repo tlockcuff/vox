@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import AVFoundation
+import Sparkle
 
 // Pure AppDelegate entry — no SwiftUI App lifecycle, no Settings window
 @main
@@ -488,7 +489,7 @@ struct ControlsView: View {
             UpdateBannerView()
 
             HStack {
-                Text("v\(UpdateChecker.shared.currentVersion)").font(.caption2).foregroundColor(.secondary)
+                Text("v\(UpdaterViewModel.shared.currentVersion)").font(.caption2).foregroundColor(.secondary)
                 Spacer()
                 Button("Quit Vox") { NSApp.terminate(nil) }.font(.caption).foregroundColor(.secondary)
             }
@@ -543,46 +544,16 @@ struct ModelBannerView: View {
 // MARK: - Update Banner
 
 struct UpdateBannerView: View {
-    @ObservedObject var checker = UpdateChecker.shared
+    @ObservedObject var updater = UpdaterViewModel.shared
 
     var body: some View {
-        Group {
-            if checker.isUpdating {
-                HStack {
-                    ProgressView().scaleEffect(0.7)
-                    Text("Updating...").font(.caption).foregroundColor(.secondary)
-                    Spacer()
-                }
-            } else if checker.updateAvailable, let latest = checker.latestVersion {
-                HStack {
-                    Image(systemName: "arrow.down.circle.fill").foregroundColor(.blue).font(.caption)
-                    Text("Update available: v\(latest)").font(.caption).foregroundColor(.primary)
-                    Spacer()
-                    Button("Update") { checker.runUpdate() }.font(.caption).buttonStyle(.borderedProminent).controlSize(.small)
-                }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.blue.opacity(0.1)))
-            } else if checker.isChecking {
-                HStack {
-                    ProgressView().scaleEffect(0.6)
-                    Text("Checking for updates...").font(.caption2).foregroundColor(.secondary)
-                    Spacer()
-                }
-            } else if let error = checker.updateError {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle").foregroundColor(.orange).font(.caption)
-                    Text(error).font(.caption2).foregroundColor(.secondary)
-                    Spacer()
-                    Button("Retry") { checker.checkForUpdates() }.font(.caption2)
-                }
-            } else {
-                HStack {
-                    Image(systemName: "checkmark.circle").foregroundColor(.green).font(.caption)
-                    Text("Up to date").font(.caption2).foregroundColor(.secondary)
-                    Spacer()
-                    Button("Check") { checker.checkForUpdates() }.font(.caption2)
-                }
-            }
+        HStack {
+            Image(systemName: "arrow.triangle.2.circlepath").foregroundColor(.secondary).font(.caption)
+            Text("Check for Updates").font(.caption2).foregroundColor(.secondary)
+            Spacer()
+            Button("Check") { updater.checkForUpdates() }
+                .font(.caption2)
+                .disabled(!updater.canCheckForUpdates)
         }
     }
 }
@@ -1018,93 +989,26 @@ class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate {
     }
 }
 
-// MARK: - Update Checker
+// MARK: - Sparkle Update Controller
 
-class UpdateChecker: ObservableObject {
-    static let shared = UpdateChecker()
+class UpdaterViewModel: ObservableObject {
+    static let shared = UpdaterViewModel()
 
-    @Published var updateAvailable = false
-    @Published var latestVersion: String?
-    @Published var isChecking = false
-    @Published var isUpdating = false
-    @Published var updateError: String?
+    let updaterController: SPUStandardUpdaterController
 
-    let currentVersion: String
-    private let repo = "tlockcuff/vox"
+    @Published var canCheckForUpdates = false
 
     init() {
-        currentVersion = AppVersion.current
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.checkForUpdates() }
-        Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in self?.checkForUpdates() }
+        updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        updaterController.updater.publisher(for: \.canCheckForUpdates)
+            .assign(to: &$canCheckForUpdates)
     }
 
     func checkForUpdates() {
-        guard !isChecking, !isUpdating else { return }
-        isChecking = true; updateError = nil
-
-        guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else { isChecking = false; return }
-        var request = URLRequest(url: url)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        if let token = getGHToken() { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.isChecking = false
-                if error != nil { self.updateError = "Network error"; return }
-                guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let tagName = json["tag_name"] as? String else { self.updateError = "Could not check"; return }
-                let latest = tagName.replacingOccurrences(of: "v", with: "")
-                self.latestVersion = latest
-                self.updateAvailable = self.isNewer(latest, than: self.currentVersion)
-            }
-        }.resume()
+        updaterController.checkForUpdates(nil)
     }
 
-    private func getGHToken() -> String? {
-        let configPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/gh/hosts.yml").path
-        if let config = try? String(contentsOfFile: configPath, encoding: .utf8) {
-            for line in config.components(separatedBy: "\n") {
-                if line.contains("oauth_token:") { return line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces) }
-            }
-        }
-        return ProcessInfo.processInfo.environment["GH_TOKEN"] ?? ProcessInfo.processInfo.environment["GITHUB_TOKEN"]
-    }
-
-    private func isNewer(_ a: String, than b: String) -> Bool {
-        let aParts = a.split(separator: ".").compactMap { Int($0) }
-        let bParts = b.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(aParts.count, bParts.count) {
-            let av = i < aParts.count ? aParts[i] : 0
-            let bv = i < bParts.count ? bParts[i] : 0
-            if av > bv { return true }; if av < bv { return false }
-        }
-        return false
-    }
-
-    func runUpdate() {
-        isUpdating = true; updateError = nil
-        let updateScript = "\(Paths.configDir)/update.sh"
-        guard FileManager.default.fileExists(atPath: updateScript) else {
-            isUpdating = false; updateError = "update.sh not found"; return
-        }
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = [updateScript]
-            process.environment = ProcessInfo.processInfo.environment
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do { try process.run(); process.waitUntilExit() } catch {
-                DispatchQueue.main.async { self?.isUpdating = false; self?.updateError = "Update failed" }; return
-            }
-            DispatchQueue.main.async {
-                self?.isUpdating = false
-                self?.updateAvailable = process.terminationStatus == 0 ? false : self?.updateAvailable ?? false
-                if process.terminationStatus != 0 { self?.updateError = "Update failed" }
-            }
-        }
+    var currentVersion: String {
+        AppVersion.current
     }
 }

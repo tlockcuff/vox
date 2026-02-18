@@ -72,6 +72,10 @@ jobs:
         run: |
           cd VoxApp
           swift build -c release
+          # Find Sparkle framework location from SPM
+          SPARKLE_FRAMEWORK=$(find .build -name "Sparkle.framework" -type d | head -1)
+          echo "SPARKLE_FRAMEWORK=${SPARKLE_FRAMEWORK}" >> $GITHUB_ENV
+          echo "Sparkle framework at: ${SPARKLE_FRAMEWORK}"
           cd ..
 
       - name: Download sherpa-onnx
@@ -93,6 +97,8 @@ jobs:
           rm kokoro.tar.bz2
 
       - name: Create .app bundle
+        env:
+          SPARKLE_ED_PUBLIC_KEY: ${{ secrets.SPARKLE_ED_PUBLIC_KEY }}
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           SHORT_VERSION="${{ steps.version.outputs.SHORT_VERSION }}"
@@ -111,6 +117,21 @@ jobs:
           # TTS engine + dylibs in Frameworks
           cp staging/bin/sherpa-onnx-offline-tts "${FRAMEWORKS}/"
           cp staging/lib/*.dylib "${FRAMEWORKS}/"
+
+          # Sparkle framework
+          if [[ -n "${SPARKLE_FRAMEWORK:-}" && -d "${SPARKLE_FRAMEWORK}" ]]; then
+            cp -R "${SPARKLE_FRAMEWORK}" "${FRAMEWORKS}/"
+            echo "✅ Sparkle.framework embedded"
+          else
+            # Fallback: find in VoxApp build dir
+            SPARKLE_FW=$(find VoxApp/.build -name "Sparkle.framework" -type d 2>/dev/null | head -1)
+            if [[ -n "$SPARKLE_FW" ]]; then
+              cp -R "$SPARKLE_FW" "${FRAMEWORKS}/"
+              echo "✅ Sparkle.framework embedded (fallback)"
+            else
+              echo "⚠️ Sparkle.framework not found — auto-update will not work"
+            fi
+          fi
 
           # Model NOT bundled in .app (too large for notarization)
           # App downloads it on first launch to ~/Library/Application Support/Vox/
@@ -171,10 +192,16 @@ jobs:
               <true/>
               <key>NSHighResolutionCapable</key>
               <true/>
+              <key>SUFeedURL</key>
+              <string>SPARKLE_FEED_URL_PLACEHOLDER</string>
+              <key>SUPublicEDKey</key>
+              <string>SPARKLE_PUBLIC_KEY_PLACEHOLDER</string>
           </dict>
           </plist>
           PLIST
           sed -i '' "s|</dict>|    <key>CFBundleVersion</key><string>${SHORT_VERSION}</string><key>CFBundleShortVersionString</key><string>${SHORT_VERSION}</string></dict>|" "${CONTENTS}/Info.plist"
+          sed -i '' "s|SPARKLE_FEED_URL_PLACEHOLDER|https://raw.githubusercontent.com/tlockcuff/vox/main/appcast.xml|" "${CONTENTS}/Info.plist"
+          sed -i '' "s|SPARKLE_PUBLIC_KEY_PLACEHOLDER|${SPARKLE_ED_PUBLIC_KEY}|" "${CONTENTS}/Info.plist"
 
           chmod +x "${MACOS}/Vox" "${FRAMEWORKS}/sherpa-onnx-offline-tts"
 
@@ -183,6 +210,21 @@ jobs:
           APP="Vox.app"
           FRAMEWORKS="${APP}/Contents/Frameworks"
           ENTITLEMENTS="scripts/entitlements.plist"
+
+          # Sign Sparkle framework (inside out)
+          if [[ -d "${FRAMEWORKS}/Sparkle.framework" ]]; then
+            codesign --force --options runtime --timestamp \
+              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/XPCServices/"*.xpc/Contents/MacOS/* 2>/dev/null || true
+            codesign --force --options runtime --timestamp \
+              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/XPCServices/"*.xpc 2>/dev/null || true
+            codesign --force --options runtime --timestamp \
+              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/Autoupdate" 2>/dev/null || true
+            codesign --force --options runtime --timestamp \
+              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework/Versions/B/Updater.app" 2>/dev/null || true
+            codesign --force --options runtime --timestamp \
+              --sign "$SIGNING_IDENTITY" "${FRAMEWORKS}/Sparkle.framework"
+            echo "✅ Sparkle.framework signed"
+          fi
 
           # Sign dylibs first (inside out) — with entitlements for ONNX Runtime JIT
           for dylib in "${FRAMEWORKS}"/*.dylib; do
@@ -293,6 +335,71 @@ jobs:
           if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
             security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
           fi
+
+      - name: Generate appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          DMG_NAME="Vox-${VERSION}.dmg"
+          DMG_URL="https://github.com/tlockcuff/vox/releases/download/${VERSION}/${DMG_NAME}"
+          DMG_SIZE=$(stat -f%z "${DMG_NAME}")
+          PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
+          SHORT_VERSION="${{ steps.version.outputs.SHORT_VERSION }}"
+
+          # Sign the DMG with Sparkle EdDSA key
+          if [[ -n "${SPARKLE_ED_PRIVATE_KEY:-}" ]]; then
+            # Find sign_update tool
+            SIGN_TOOL=$(find VoxApp/.build -name "sign_update" -type f 2>/dev/null | head -1)
+            if [[ -z "$SIGN_TOOL" ]]; then
+              # Download Sparkle tools
+              curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/2.7.5/Sparkle-2.7.5.tar.xz" -o /tmp/sparkle.tar.xz
+              mkdir -p /tmp/sparkle-tools && tar xf /tmp/sparkle.tar.xz -C /tmp/sparkle-tools
+              SIGN_TOOL="/tmp/sparkle-tools/bin/sign_update"
+            fi
+
+            if [[ -f "$SIGN_TOOL" ]]; then
+              chmod +x "$SIGN_TOOL"
+              SIGNATURE=$(echo "$SPARKLE_ED_PRIVATE_KEY" | "$SIGN_TOOL" "${DMG_NAME}" --ed-key-file - 2>/dev/null | grep 'edSignature' | sed 's/.*edSignature="\([^"]*\)".*/\1/')
+              echo "EdDSA signature: ${SIGNATURE:0:20}..."
+            fi
+          fi
+
+          # Generate appcast.xml
+          cat > appcast.xml << APPCAST
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <channel>
+              <title>Vox Updates</title>
+              <link>https://github.com/tlockcuff/vox</link>
+              <language>en</language>
+              <item>
+                <title>Vox ${SHORT_VERSION}</title>
+                <pubDate>${PUB_DATE}</pubDate>
+                <sparkle:version>${SHORT_VERSION}</sparkle:version>
+                <sparkle:shortVersionString>${SHORT_VERSION}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+                <enclosure url="${DMG_URL}"
+                  sparkle:edSignature="${SIGNATURE:-}"
+                  length="${DMG_SIZE}"
+                  type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          APPCAST
+          echo "✅ Appcast generated"
+          cat appcast.xml
+
+      - name: Commit appcast
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          cp appcast.xml .
+          git add appcast.xml
+          git diff --cached --quiet || git commit -m "Update appcast for ${{ steps.version.outputs.VERSION }}"
+          git push origin main || echo "⚠️ Could not push appcast (non-fatal)"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
