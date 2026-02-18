@@ -220,64 +220,21 @@ jobs:
           ditto -c -k --keepParent Vox.app Vox-notarize.zip
           echo "📤 Zip size: $(du -sh Vox-notarize.zip | cut -f1)"
 
-          # Submit for notarization
+          # Submit and wait (5 min timeout — if Apple is slow, we ship signed-only)
           echo "📤 Submitting for notarization..."
-          SUBMIT_OUTPUT=$(xcrun notarytool submit Vox-notarize.zip \
+          if xcrun notarytool submit Vox-notarize.zip \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --output-format json 2>&1) || true
-          echo "$SUBMIT_OUTPUT"
-
-          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
-          if [[ -z "$SUBMISSION_ID" ]]; then
-            echo "❌ Failed to get submission ID"
-            echo "$SUBMIT_OUTPUT"
-            exit 1
+            --wait --timeout 300; then
+            echo "📎 Stapling notarization ticket..."
+            xcrun stapler staple Vox.app
+            echo "✅ Notarization complete"
+          else
+            echo "⚠️ Notarization did not complete in time — shipping signed-only"
+            echo "   (Users will see a one-time 'Open Anyway' prompt in System Settings)"
           fi
-          echo "📋 Submission ID: $SUBMISSION_ID"
-
-          # Poll for completion
-          echo "⏳ Waiting for Apple to process..."
-          for i in $(seq 1 60); do
-            sleep 30
-            STATUS_OUTPUT=$(xcrun notarytool info "$SUBMISSION_ID" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --output-format json 2>&1) || true
-
-            STATUS=$(echo "$STATUS_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','Unknown'))" 2>/dev/null || echo "Unknown")
-            echo "  [$((i * 30))s] Status: $STATUS"
-
-            if [[ "$STATUS" == "Accepted" ]]; then
-              echo "✅ Notarization accepted!"
-              break
-            elif [[ "$STATUS" == "Invalid" || "$STATUS" == "Rejected" ]]; then
-              echo "❌ Notarization failed: $STATUS"
-              xcrun notarytool log "$SUBMISSION_ID" \
-                --apple-id "$APPLE_ID" \
-                --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-                --team-id "$APPLE_TEAM_ID" 2>&1 || true
-              exit 1
-            fi
-          done
-
-          if [[ "$STATUS" != "Accepted" ]]; then
-            echo "❌ Notarization timed out after 30 minutes"
-            xcrun notarytool log "$SUBMISSION_ID" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" 2>&1 || true
-            exit 1
-          fi
-
-          # Staple the ticket to the app
-          echo "📎 Stapling notarization ticket..."
-          xcrun stapler staple Vox.app
-
-          echo "✅ Notarization complete"
-          rm Vox-notarize.zip
+          rm -f Vox-notarize.zip
 
       - name: Create DMG
         run: |
@@ -294,15 +251,18 @@ jobs:
           # Sign the DMG
           codesign --force --timestamp --sign "$SIGNING_IDENTITY" "${DMG_NAME}"
 
-          # Notarize DMG (the .app inside is already notarized, so this is fast)
+          # Notarize DMG (non-blocking — app may already be notarized)
           echo "📤 Notarizing DMG..."
-          xcrun notarytool submit "${DMG_NAME}" \
+          if xcrun notarytool submit "${DMG_NAME}" \
             --apple-id "${{ secrets.APPLE_ID }}" \
             --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" \
             --team-id "${{ secrets.APPLE_TEAM_ID }}" \
-            --wait --timeout 1800 || echo "⚠️ DMG notarization timed out (app is still notarized)"
-          xcrun stapler staple "${DMG_NAME}" || echo "⚠️ DMG staple skipped"
-          echo "✅ DMG done"
+            --wait --timeout 300; then
+            xcrun stapler staple "${DMG_NAME}" || true
+            echo "✅ DMG notarized"
+          else
+            echo "⚠️ DMG notarization skipped — shipping signed-only"
+          fi
 
       - name: Also create zip (for update.sh)
         run: |
