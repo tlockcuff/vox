@@ -299,6 +299,51 @@ echo "$@" | "${HOME}/.speaksel/speaksel.sh"</string>
 </plist>
 WFLOW
 
+# Install menu bar app
+if [[ -f "${SCRIPT_DIR}/SpeakSel" ]] || [[ -f "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" ]]; then
+    echo "🖥️  Installing menu bar app..."
+    if [[ -f "${SCRIPT_DIR}/SpeakSel" ]]; then
+        cp "${SCRIPT_DIR}/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
+    else
+        cp "${SCRIPT_DIR}/../SpeakSelApp/.build/release/SpeakSel" "${SPEAKSEL_DIR}/bin/SpeakSel"
+    fi
+    chmod +x "${SPEAKSEL_DIR}/bin/SpeakSel"
+
+    # Create Launch Agent to auto-start on login
+    LAUNCH_AGENT_DIR="${HOME}/Library/LaunchAgents"
+    mkdir -p "${LAUNCH_AGENT_DIR}"
+    cat > "${LAUNCH_AGENT_DIR}/com.speaksel.app.plist" << LAUNCHPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.speaksel.app</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${SPEAKSEL_DIR}/bin/SpeakSel</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DYLD_LIBRARY_PATH</key>
+        <string>${SPEAKSEL_DIR}/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+LAUNCHPLIST
+
+    # Start the app now
+    launchctl load "${LAUNCH_AGENT_DIR}/com.speaksel.app.plist" 2>/dev/null || true
+    echo "✅ Menu bar app installed (auto-starts on login)"
+fi
+
+# Create request file for app communication
+touch "${SPEAKSEL_DIR}/.request"
+
 # Install uninstaller
 cat > "${SPEAKSEL_DIR}/uninstall.sh" << 'UNINSTALL'
 #!/usr/bin/env bash

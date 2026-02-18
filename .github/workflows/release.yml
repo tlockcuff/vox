@@ -9,7 +9,7 @@ on:
       tag:
         description: 'Release tag (e.g. v1.0.0)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.2.0'
 
 permissions:
   contents: write
@@ -30,6 +30,13 @@ jobs:
             echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Build SpeakSel menu bar app
+        run: |
+          cd SpeakSelApp
+          swift build -c release
+          cp .build/release/SpeakSel ../SpeakSel-binary
+          cd ..
+
       - name: Download sherpa-onnx
         run: |
           SHERPA_VERSION="v1.12.25"
@@ -49,18 +56,12 @@ jobs:
           mv kokoro-en-v0_19 build/
           rm kokoro.tar.bz2
 
-      - name: Download install script
-        run: |
-          cp scripts/speaksel.sh build/
-
       - name: Fix dylib paths
         run: |
           cd build/bin
-          # Update dylib search paths to be relative
           for dylib in *.dylib; do
             install_name_tool -id "@loader_path/${dylib}" "${dylib}" 2>/dev/null || true
           done
-          # Update the binary to look for dylibs in its own directory
           for dylib in *.dylib; do
             install_name_tool -change "@rpath/${dylib}" "@executable_path/${dylib}" sherpa-onnx-offline-tts 2>/dev/null || true
           done
@@ -72,8 +73,9 @@ jobs:
           cp -r build/kokoro-en-v0_19 SpeakSel-macOS/
           cp scripts/speaksel.sh SpeakSel-macOS/
           cp scripts/install.sh SpeakSel-macOS/
+          cp SpeakSel-binary SpeakSel-macOS/SpeakSel
           cp README.md SpeakSel-macOS/
-          chmod +x SpeakSel-macOS/install.sh SpeakSel-macOS/speaksel.sh
+          chmod +x SpeakSel-macOS/install.sh SpeakSel-macOS/speaksel.sh SpeakSel-macOS/SpeakSel
           zip -r "SpeakSel-macOS-${{ steps.version.outputs.VERSION }}.zip" SpeakSel-macOS/
 
       - name: Create Release
@@ -86,18 +88,17 @@ jobs:
 
             **Highlight → Right-Click → Speak** with natural AI voices on macOS.
 
+            ### What's new
+            - 🖥️ **Menu bar app** — visual playback controls (play/pause/stop)
+            - ⚡ **Streaming playback** — audio starts playing sentence-by-sentence instead of waiting for full generation
+            - 🎚️ **Speed & voice controls** — adjust from the menu bar
+            - 🔧 Raycast extension for keyboard shortcut integration
+
             ### Installation
             1. Download `SpeakSel-macOS-${{ steps.version.outputs.VERSION }}.zip`
             2. Unzip and run `./install.sh`
-            3. Highlight text anywhere → Right-click → Services → **Speak with SpeakSel**
-
-            ### What's included
-            - sherpa-onnx TTS engine (universal binary — Apple Silicon + Intel)
-            - Kokoro English v0.19 model (11 natural voices)
-            - macOS Quick Action (right-click integration)
-
-            ### Voices
-            Default: `am_adam` (American Male). Change with `echo "0" > ~/.speaksel/voice` (see README for all voices).
+            3. Launch SpeakSel from the install directory (adds to menu bar)
+            4. Highlight text anywhere → Right-click → Services → **Speak with SpeakSel**
           files: |
             SpeakSel-macOS-${{ steps.version.outputs.VERSION }}.zip
           draft: false
