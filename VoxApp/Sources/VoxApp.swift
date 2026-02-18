@@ -70,13 +70,18 @@ struct FirstLaunchSetup {
         if !fm.fileExists(atPath: voiceFile) { try? "5".write(toFile: voiceFile, atomically: true, encoding: .utf8) }
         if !fm.fileExists(atPath: speedFile) { try? "1.0".write(toFile: speedFile, atomically: true, encoding: .utf8) }
 
-        let requestFile = "\(configDir)/.request"
+        let requestFile = "\(Paths.legacyDir)/.request"
         if !fm.fileExists(atPath: requestFile) { fm.createFile(atPath: requestFile, contents: nil) }
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.5.1"
         try? version.write(toFile: "\(configDir)/.version", atomically: true, encoding: .utf8)
 
         extractBundleResources()
+
+        // Download model if needed (async — UI shows progress)
+        if !Paths.modelExists {
+            ModelDownloader.shared.downloadModel()
+        }
 
         // Remove old SpeakSel remnants
         let oldWorkflow = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Services/Speak with SpeakSel.workflow").path
@@ -274,8 +279,19 @@ func log(_ message: String) {
 // MARK: - Paths
 
 struct Paths {
-    /// User config/data directory (always ~/.vox/)
+    /// User data directory
     static let configDir: String = {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Vox").path
+        // Also keep ~/.vox/ as alias for shell script compatibility
+        let legacyDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vox").path
+        try? FileManager.default.createDirectory(atPath: appSupport, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: legacyDir, withIntermediateDirectories: true)
+        return appSupport
+    }()
+
+    /// Legacy ~/.vox/ for shell script IPC
+    static let legacyDir: String = {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vox").path
     }()
 
@@ -284,30 +300,41 @@ struct Paths {
         Bundle.main.bundlePath.hasSuffix(".app")
     }()
 
-    /// TTS binary: prefer .app bundle, fallback to ~/.vox/bin/
+    /// TTS binary: .app bundle Frameworks or ~/.vox/bin/
     static var ttsBin: String {
         if isAppBundle {
             let bundlePath = Bundle.main.bundlePath + "/Contents/Frameworks/sherpa-onnx-offline-tts"
             if FileManager.default.fileExists(atPath: bundlePath) { return bundlePath }
         }
+        let legacyPath = "\(legacyDir)/bin/sherpa-onnx-offline-tts"
+        if FileManager.default.fileExists(atPath: legacyPath) { return legacyPath }
         return "\(configDir)/bin/sherpa-onnx-offline-tts"
     }
 
-    /// Model directory: prefer .app bundle, fallback to ~/.vox/
+    /// Model directory (downloaded on first launch)
     static var modelDir: String {
+        // Check multiple locations
+        let appSupportModel = "\(configDir)/kokoro-en-v0_19"
+        if FileManager.default.fileExists(atPath: "\(appSupportModel)/model.onnx") { return appSupportModel }
+        let legacyModel = "\(legacyDir)/kokoro-en-v0_19"
+        if FileManager.default.fileExists(atPath: "\(legacyModel)/model.onnx") { return legacyModel }
         if isAppBundle {
-            let bundlePath = Bundle.main.bundlePath + "/Contents/Resources/kokoro-en-v0_19"
-            if FileManager.default.fileExists(atPath: bundlePath) { return bundlePath }
+            let bundleModel = Bundle.main.bundlePath + "/Contents/Resources/kokoro-en-v0_19"
+            if FileManager.default.fileExists(atPath: "\(bundleModel)/model.onnx") { return bundleModel }
         }
-        return "\(configDir)/kokoro-en-v0_19"
+        return appSupportModel  // default location for download
     }
 
-    /// Dylib directory for DYLD_LIBRARY_PATH (only needed for non-@loader_path builds)
+    /// Dylib directory
     static var libDir: String {
         if isAppBundle {
             return Bundle.main.bundlePath + "/Contents/Frameworks"
         }
-        return "\(configDir)/bin"
+        return "\(legacyDir)/bin"
+    }
+
+    static var modelExists: Bool {
+        FileManager.default.fileExists(atPath: "\(modelDir)/model.onnx")
     }
 }
 
@@ -432,6 +459,8 @@ struct ControlsView: View {
                 }
             }
 
+            ModelBannerView()
+
             Divider()
             UpdateBannerView()
 
@@ -443,6 +472,48 @@ struct ControlsView: View {
         }
         .padding()
         .frame(width: 300)
+    }
+}
+
+// MARK: - Model Banner
+
+struct ModelBannerView: View {
+    @ObservedObject var downloader = ModelDownloader.shared
+
+    var body: some View {
+        if downloader.isDownloading {
+            VStack(spacing: 6) {
+                HStack {
+                    Image(systemName: "arrow.down.circle").foregroundColor(.blue).font(.caption)
+                    Text("Downloading voice model...").font(.caption)
+                    Spacer()
+                    Text("\(Int(downloader.progress * 100))%").font(.caption).monospacedDigit().foregroundColor(.secondary)
+                }
+                ProgressView(value: downloader.progress).progressViewStyle(.linear).tint(.blue)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.blue.opacity(0.1)))
+        } else if let error = downloader.error {
+            HStack {
+                Image(systemName: "exclamationmark.triangle").foregroundColor(.orange).font(.caption)
+                Text(error).font(.caption2).foregroundColor(.secondary)
+                Spacer()
+                Button("Retry") { downloader.downloadModel() }.font(.caption2)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.1)))
+        } else if !Paths.modelExists {
+            HStack {
+                Image(systemName: "exclamationmark.triangle").foregroundColor(.orange).font(.caption)
+                Text("Voice model not installed").font(.caption).foregroundColor(.secondary)
+                Spacer()
+                Button("Download") { downloader.downloadModel() }.font(.caption).buttonStyle(.borderedProminent).controlSize(.small)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.1)))
+        } else {
+            EmptyView()
+        }
     }
 }
 
@@ -603,7 +674,7 @@ class TTSEngine: ObservableObject {
     }
 
     func startWatching() {
-        let requestFile = "\(Paths.configDir)/.request"
+        let requestFile = "\(Paths.legacyDir)/.request"
         if !FileManager.default.fileExists(atPath: requestFile) {
             FileManager.default.createFile(atPath: requestFile, contents: nil)
         }
@@ -621,7 +692,7 @@ class TTSEngine: ObservableObject {
     }
 
     private func handleRequest() {
-        let requestFile = "\(Paths.configDir)/.request"
+        let requestFile = "\(Paths.legacyDir)/.request"
         guard let text = try? String(contentsOfFile: requestFile, encoding: .utf8),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         try? "".write(toFile: requestFile, atomically: true, encoding: .utf8)
@@ -833,6 +904,93 @@ class TTSEngine: ObservableObject {
     private func cleanup() {
         for i in 0..<max(totalSentences, 50) {
             try? FileManager.default.removeItem(atPath: "\(Paths.configDir)/.chunk_\(i).wav")
+        }
+    }
+}
+
+// MARK: - Model Downloader
+
+class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate {
+    static let shared = ModelDownloader()
+
+    @Published var isDownloading = false
+    @Published var progress: Double = 0
+    @Published var error: String?
+    @Published var isComplete = false
+
+    private let modelURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2"
+    private var downloadTask: URLSessionDownloadTask?
+
+    func downloadModel() {
+        guard !isDownloading, !Paths.modelExists else { return }
+        DispatchQueue.main.async {
+            self.isDownloading = true
+            self.progress = 0
+            self.error = nil
+        }
+        log("Starting model download from \(modelURL)")
+
+        let config = URLSessionConfiguration.default
+        let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        guard let url = URL(string: modelURL) else { return }
+        downloadTask = session.downloadTask(with: url)
+        downloadTask?.resume()
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        let pct = totalBytesExpectedToWrite > 0 ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) : 0
+        DispatchQueue.main.async { self.progress = pct }
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        log("Model download complete, extracting...")
+        let targetDir = Paths.configDir
+        let tarPath = "\(targetDir)/kokoro-model.tar.bz2"
+
+        do {
+            // Copy downloaded file
+            let fm = FileManager.default
+            if fm.fileExists(atPath: tarPath) { try fm.removeItem(atPath: tarPath) }
+            try fm.copyItem(at: location, to: URL(fileURLWithPath: tarPath))
+
+            // Extract using tar
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+            process.arguments = ["xjf", tarPath, "-C", targetDir]
+            try process.run()
+            process.waitUntilExit()
+
+            try? fm.removeItem(atPath: tarPath)
+
+            if process.terminationStatus == 0 && Paths.modelExists {
+                log("Model extracted successfully to \(Paths.modelDir)")
+                DispatchQueue.main.async {
+                    self.isDownloading = false
+                    self.isComplete = true
+                }
+            } else {
+                log("Model extraction failed (exit \(process.terminationStatus))")
+                DispatchQueue.main.async {
+                    self.isDownloading = false
+                    self.error = "Extraction failed"
+                }
+            }
+        } catch {
+            log("Model install error: \(error)")
+            DispatchQueue.main.async {
+                self.isDownloading = false
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            log("Model download error: \(error)")
+            DispatchQueue.main.async {
+                self.isDownloading = false
+                self.error = "Download failed: \(error.localizedDescription)"
+            }
         }
     }
 }

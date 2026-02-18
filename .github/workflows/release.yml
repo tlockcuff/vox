@@ -112,8 +112,8 @@ jobs:
           cp staging/bin/sherpa-onnx-offline-tts "${FRAMEWORKS}/"
           cp staging/lib/*.dylib "${FRAMEWORKS}/"
 
-          # Model in Resources
-          cp -r staging/kokoro-en-v0_19 "${RESOURCES}/"
+          # Model NOT bundled in .app (too large for notarization)
+          # App downloads it on first launch to ~/Library/Application Support/Vox/
 
           # App icon
           ICONSET="${RESOURCES}/AppIcon.iconset"
@@ -316,7 +316,7 @@ jobs:
           mkdir -p Vox-macOS/bin
           cp Vox.app/Contents/Frameworks/* Vox-macOS/bin/
           cp Vox.app/Contents/MacOS/Vox Vox-macOS/Vox
-          cp -r Vox.app/Contents/Resources/kokoro-en-v0_19 Vox-macOS/
+          cp -r staging/kokoro-en-v0_19 Vox-macOS/
           chmod +x Vox-macOS/install.sh Vox-macOS/vox.sh Vox-macOS/Vox
           zip -r "Vox-macOS-${VERSION}.zip" Vox-macOS/
 
