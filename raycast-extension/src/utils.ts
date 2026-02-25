@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, execFile } from "child_process";
 import { homedir } from "os";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
@@ -27,7 +27,6 @@ export function speak(text: string): void {
     ...process.env,
     DYLD_LIBRARY_PATH: `${VOX_DIR}/bin:${process.env.DYLD_LIBRARY_PATH || ""}`,
   };
-  const { execFile } = require("child_process");
   execFile(SCRIPT, ["speak", text], { env, timeout: 60000 }, () => {});
 }
 
@@ -40,12 +39,7 @@ export function togglePlayback(): void {
 }
 
 export function getStatus(): { state: string; voice: string; speed: string } {
-  try {
-    const result = runCommand("status");
-    return JSON.parse(result);
-  } catch {
-    return { state: "stopped", voice: "5", speed: "1.0" };
-  }
+  return { state: "stopped", voice: getVoice(), speed: getSpeed() };
 }
 
 export function setVoice(id: string): void {

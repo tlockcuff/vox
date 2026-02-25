@@ -293,7 +293,7 @@ func log(_ message: String) {
     let line = "[\(timestamp)] \(message)\n"
     if let handle = FileHandle(forWritingAtPath: logFile) {
         handle.seekToEndOfFile()
-        handle.write(line.data(using: .utf8)!)
+        if let data = line.data(using: .utf8) { handle.write(data) }
         handle.closeFile()
     } else {
         FileManager.default.createFile(atPath: logFile, contents: line.data(using: .utf8))
